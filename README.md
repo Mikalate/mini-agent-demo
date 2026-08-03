@@ -220,6 +220,7 @@ artifacts/               本地录屏成品（默认不提交 Git）
 ## 已知限制
 
 - search 和 weather 是可重复的本地 mock，不是实时服务；
+- read_docs 工具未实现
 - Context 使用字符预算近似 token，没有精确费用估算；
 - 非流式请求只能在 API 返回 usage 后判断 token 是否达到硬预算；
 - SQLite 适合本题的本地多终端演示，未做高并发压力测试；
@@ -228,3 +229,4 @@ artifacts/               本地录屏成品（默认不提交 Git）
 - 尚未实现流式输出、向量检索、真实搜索或真实天气，这些均属于 P1。
 
 运行时 Prompt 见 [PROMPTS.md](PROMPTS.md)，关键工程问题见 [PROBLEM_SOLVING.md](PROBLEM_SOLVING.md)，录屏及复现方法见 [RECORDING.md](RECORDING.md)，逐项 AI Prompt 与成果记录见 [AI_PROMPT与问题解决记录.md](AI_PROMPT与问题解决记录.md)。
+
