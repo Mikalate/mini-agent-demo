@@ -228,4 +228,3 @@ artifacts/               本地录屏成品（默认不提交 Git）
 - 尚未实现流式输出、向量检索、真实搜索或真实天气，这些均属于 P1。
 
 运行时 Prompt 见 [PROMPTS.md](PROMPTS.md)，关键工程问题见 [PROBLEM_SOLVING.md](PROBLEM_SOLVING.md)，录屏及复现方法见 [RECORDING.md](RECORDING.md)，逐项 AI Prompt 与成果记录见 [AI_PROMPT与问题解决记录.md](AI_PROMPT与问题解决记录.md)。
-

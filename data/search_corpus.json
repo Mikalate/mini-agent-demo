@@ -1,0 +1,27 @@
+[
+  {
+    "title": "Agent Loop 基础",
+    "source": "local://agent-loop",
+    "snippet": "Agent Loop 重复执行模型调用、工具执行和结果回填，直到模型给出最终回答。",
+    "keywords": ["agent", "loop", "工具调用", "控制循环"]
+  },
+  {
+    "title": "Context Compression",
+    "source": "local://context-compression",
+    "snippet": "上下文压缩保留最近消息，并把较早对话整理为可更新的滚动摘要。",
+    "keywords": ["context", "compression", "summary", "上下文压缩"]
+  },
+  {
+    "title": "SQLite Session Isolation",
+    "source": "local://session-isolation",
+    "snippet": "使用 user_id 与 session_id 的复合唯一键，并在每次查询中同时过滤两个字段。",
+    "keywords": ["sqlite", "session", "isolation", "会话隔离"]
+  },
+  {
+    "title": "Tool Schema Validation",
+    "source": "local://tool-schema",
+    "snippet": "在执行工具前使用 JSON Schema 校验参数，并通过注册表限制允许调用的工具。",
+    "keywords": ["tool", "schema", "jsonschema", "参数校验"]
+  }
+]
+
