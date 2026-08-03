@@ -1,0 +1,231 @@
+# Mini Agent
+
+一个完全运行在终端中的最小可用 Agent：DeepSeek 自主决定直接回答或调用工具，Python Runtime 负责校验、执行、回填、持久化和终止控制。
+
+当前验收结果：35 项默认离线测试与 4 项真实 DeepSeek smoke test 全部通过。
+
+公开仓库：[Mikalate/mini-agent-demo](https://github.com/Mikalate/mini-agent-demo)
+
+## 从零实现的边界
+
+项目没有使用 LangChain Agent、LangGraph、OpenAI Agents SDK Runner、CrewAI 等 Agent 框架。以下部分由本项目自行实现：
+
+- 消息组装、输出解析和显式 Agent Loop；
+- ToolSpec、工具注册、参数校验、分发和错误包装；
+- round/tool/token 预算、无进展检测和终止状态；
+- SQLite session 隔离、恢复、待办和 run 持久化；
+- Context 选择、完整回合压缩、滚动摘要和失败回退；
+- 结构化事件、JSONL Trace 及 Rich/纯文本终端渲染。
+
+第三方库只承担基础能力：`openai` 负责 DeepSeek 的 OpenAI 兼容 API 通信，`jsonschema` 校验工具参数，`rich` 渲染终端，`pytest` 运行测试；它们都不控制 Agent 的决策循环。
+
+## 环境与安装
+
+- Python 3.11 或更高版本；本项目已在 Python 3.13 验证。
+- 可用的 DeepSeek API key。
+
+Windows PowerShell：
+
+~~~powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -e ".[test]"
+Copy-Item .env.example .env
+~~~
+
+编辑 `.env`，至少填写：
+
+~~~text
+DEEPSEEK_API_KEY=你的密钥
+~~~
+
+`.env`、`APIkey.txt`、`.agent_data/`、SQLite 文件和 Trace 均已加入 `.gitignore`。程序不会自动读取 `APIkey.txt`；该文件只是开发验收时使用的本地临时密钥文件，不能提交。
+
+## 一条命令启动
+
+~~~powershell
+python -m mini_agent chat --user user_a --session window_1
+~~~
+
+另开一个终端即可同时运行隔离的第二个 session：
+
+~~~powershell
+python -m mini_agent chat --user user_a --session window_2
+~~~
+
+CI 或不支持颜色的终端可添加 `--no-color`。
+
+## 配置
+
+| 环境变量 | 默认值 | 作用 |
+|---|---:|---|
+| `DEEPSEEK_API_KEY` | 无 | 必填；只用于 API 客户端 |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | OpenAI 兼容端点 |
+| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | 模型名 |
+| `DEEPSEEK_THINKING` | `enabled` | `enabled` 或 `disabled` |
+| `DEEPSEEK_REASONING_EFFORT` | `max` | thinking 启用时发送 |
+| `DEEPSEEK_MAX_TOKENS` | `4096` | 单次 completion 上限 |
+| `DEEPSEEK_TIMEOUT_SECONDS` | `60` | 单次请求超时 |
+| `DEEPSEEK_MAX_RETRIES` | `3` | 429、500/503、连接/超时的总尝试上限 |
+| `MAX_LLM_ROUNDS_PER_TURN` | `8` | 一次用户输入的模型决策轮数 |
+| `MAX_TOOL_CALLS_PER_TURN` | `12` | 一次 run 的工具调用上限 |
+| `MAX_PROTOCOL_ERRORS` | `2` | 空响应或损坏协议的纠正上限 |
+| `MAX_CONSECUTIVE_TOOL_ERRORS` | `3` | 连续工具失败上限 |
+| `MAX_REPEATED_CALLS` | `2` | 相同调用与结果的无进展阈值 |
+| `MAX_TOTAL_TOKENS_PER_TURN` | `0` | 可选 token 硬预算；`0` 表示关闭 |
+| `MAX_CONTEXT_CHARS` | `30000` | 触发上下文压缩的字符预算 |
+| `KEEP_RECENT_MESSAGES` | `12` | 压缩时至少保留的最近协议消息数 |
+| `AGENT_DATA_DIR` | `.agent_data` | SQLite 与 run Trace 根目录 |
+
+OpenAI SDK 的隐式重试固定关闭，Runtime 自己计数并记录每次实际退避。请求不传 `tool_choice`，保持模型自主选择直接回答或使用工具。
+
+## 终端命令
+
+| 命令 | 作用 |
+|---|---|
+| `/help` | 显示命令帮助 |
+| `/tools` | 查看已注册工具和参数摘要 |
+| `/sessions` | 列出当前用户的 sessions |
+| `/new <session>` | 新建并切换 session |
+| `/switch <session>` | 切换到当前用户已有的 session |
+| `/history [n]` | 查看最近 n 条消息，不显示隐藏推理 |
+| `/context` | 查看上下文字符数、未压缩消息数和摘要版本 |
+| `/trace` | 查看最近一次 run 的 Trace 路径和可读摘要 |
+| `/reset` | 再次输入当前 session 名后，仅清空该 session |
+| `/exit` | 安全退出 |
+
+也可以直接使用顶层命令：
+
+~~~powershell
+python -m mini_agent sessions --user user_a
+python -m mini_agent history --user user_a --session window_1 --limit 20
+python -m mini_agent trace --user user_a --session window_1
+~~~
+
+## 四个本地工具
+
+| 工具 | 能力 | 数据来源/安全边界 |
+|---|---|---|
+| `calculator` | 受限算术表达式 | AST 白名单，不使用 `eval` |
+| `search` | 搜索演示语料 | `data/search_corpus.json`，明确返回 `mock=true` |
+| `todo` | add/list/complete/delete | 身份由 ToolContext 注入，只操作当前 session |
+| `weather` | 查询演示天气 | `data/weather_fixture.json`，未知城市返回结构化错误 |
+
+search 和 weather 不访问互联网，不会把 fixture 结果描述成实时数据。
+
+## Agent Loop
+
+一次用户输入对应一个 run，一次模型请求对应一个 round，一次真实工具执行对应一个 tool step。
+
+~~~text
+创建/恢复 session，写入 user 消息
+  → 构建或压缩 Context
+  → 调用 DeepSeek（tools 始终由 Registry 动态导出）
+  → Parser 判断 final / tool_calls / invalid
+  → final：持久化回答并完成
+  → tool_calls：保存完整 assistant 工具消息
+      → Registry 校验工具名、JSON、Schema 和跨字段规则
+      → 执行工具并用相同 tool_call_id 回填结果
+      → 回到下一轮模型决策
+~~~
+
+只有“没有 tool_calls 且 content 非空”才算完成。工具错误会作为结构化 tool 消息回填，让模型有机会修正；达到 round、tool、token、协议、连续错误或重复无进展上限时返回明确的 `incomplete`，不会猜测一个看似成功的答案。Ctrl+C 对应 `interrupted`，已写入的数据仍保留。
+
+## Session、Context 与 Memory
+
+SQLite 使用 `(user_id, session_id)` 唯一键，所有消息、待办和 run 查询都同时携带这两个标识。todo 的身份不出现在模型参数 Schema 中，只能由 Runtime 注入。数据库启用 WAL，每次操作使用独立事务；重新启动并使用相同 user/session 即可继续聊天。
+
+每次 LLM 调用的 Context 顺序为：
+
+1. 稳定 system prompt；
+2. 可选的 session 滚动摘要，标明为低优先级历史数据；
+3. 最近未压缩的完整 role 消息；
+4. 当前 run 内完整的 assistant tool_calls 与对应 tool 结果。
+
+当序列化消息超过 `MAX_CONTEXT_CHARS` 时，ContextManager 只压缩最早的、已经闭合的完整用户回合。assistant tool_calls、`reasoning_content` 和对应 tool 消息不可拆分，当前 run 永不压缩。摘要成功后，摘要更新与旧消息 `is_compressed=1` 在同一事务中提交，原始消息不会删除；失败时数据库不变，本轮使用旧摘要和最近完整回合安全回退。
+
+Memory 的召回规则：
+
+| 类型 | 召回时机 | 放置位置 |
+|---|---|---|
+| 最近对话 | 每次 LLM 调用 | 滚动摘要之后的原始 role 消息 |
+| 滚动摘要 | session 有摘要时 | 独立 system memory 段 |
+| todo 实时状态 | 模型判断需要准确状态时 | 调用 todo 后的 tool 消息 |
+| 工具 Schema | 每次 LLM 调用 | API 的 `tools` 参数 |
+| Trace | 从不召回 | 只用于观察和复现 |
+
+摘要不是事实数据库；可变的待办状态始终以 todo 工具查询结果为准，摘要与最新消息冲突时以最新消息为准。
+
+## Trace 与脱敏
+
+每个 run 写入：
+
+~~~text
+.agent_data/runs/<run_id>/trace.jsonl
+~~~
+
+主要事件包括 `run_start`、`context_built`、`llm_call_start/end`、`assistant_decision`、`tool_call_start/end`、`context_compacted`、`retry`、`error` 和 `run_end`。Trace 可以复盘轮次、公开决策摘要、脱敏参数、工具结果、usage、耗时和终止原因。
+
+`reasoning_content` 仅为 DeepSeek 活跃工具链的协议回传字段，可能持久化到 SQLite 以维持协议，但绝不进入终端、Trace、滚动摘要或最终回答。统一脱敏层会删除该字段并遮盖 API key、Authorization、口令类字段和常见密钥文本。Renderer 或 Trace Writer 失败由事件总线隔离，不影响 Agent Loop。
+
+## 新增工具
+
+1. 新建一个返回 `ToolSpec` 的模块，定义小写工具名、描述、JSON Schema 和 async handler。
+2. Schema 使用 `type=object`、列出 `properties/required`，并设置 `additionalProperties=false`。
+3. 如有跨字段约束，提供 `argument_validator`；不要只依赖 prompt。
+4. handler 只使用验证后的参数和 Runtime 注入的 `ToolContext`，返回统一 `ToolResult`。
+5. 在 `build_default_registry()` 中注册；Agent Loop 不需要修改。
+6. 添加成功、非法参数、handler 错误和权限隔离测试。
+
+## 测试
+
+默认测试完全离线：
+
+~~~powershell
+python -m pytest -m "not live"
+~~~
+
+运行真实 DeepSeek smoke tests 前，把 key 放入当前进程环境变量，再执行：
+
+~~~powershell
+python -m pytest -m live
+~~~
+
+当前测试结果：
+
+- 35 项离线测试通过，覆盖工具、Parser、Loop、Session、Context、Trace、预算、重试和两个 session E2E；
+- 4 项 live 测试通过，覆盖直接回答、calculator、search、weather→todo、todo add/list 和 session 恢复；
+- live 测试只断言结构和关键事实，不依赖完整自然语言措辞。
+
+## 项目结构
+
+~~~text
+mini_agent/
+  cli.py                 终端入口与 session 命令
+  config.py              配置、预算和数据路径
+  core/agent.py          手写 Agent Loop
+  core/context.py        Context 选择与滚动摘要
+  core/parser.py         模型响应解析
+  core/prompts.py        运行时 Prompt
+  core/trace.py          事件、JSONL 与终端 Renderer
+  llm/deepseek.py        DeepSeek API 适配器
+  sessions/store.py      SQLite SessionStore
+  tools/                 四个工具与 Registry
+tests/                   unit / integration / e2e / live
+data/                    本地 search/weather fixture
+scripts/                 真实终端演示、窗口录制与脱敏回放
+artifacts/               本地录屏成品（默认不提交 Git）
+~~~
+
+## 已知限制
+
+- search 和 weather 是可重复的本地 mock，不是实时服务；
+- Context 使用字符预算近似 token，没有精确费用估算；
+- 非流式请求只能在 API 返回 usage 后判断 token 是否达到硬预算；
+- SQLite 适合本题的本地多终端演示，未做高并发压力测试；
+- 中断后可继续 session，但不会从未完成工具调用的中间指令自动恢复执行；
+- 数据库目前只有初始 schema，没有通用迁移框架；
+- 尚未实现流式输出、向量检索、真实搜索或真实天气，这些均属于 P1。
+
+运行时 Prompt 见 [PROMPTS.md](PROMPTS.md)，关键工程问题见 [PROBLEM_SOLVING.md](PROBLEM_SOLVING.md)，录屏及复现方法见 [RECORDING.md](RECORDING.md)，逐项 AI Prompt 与成果记录见 [AI_PROMPT与问题解决记录.md](AI_PROMPT与问题解决记录.md)。
+
