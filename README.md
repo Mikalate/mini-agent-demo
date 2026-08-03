@@ -220,6 +220,7 @@ artifacts/               本地录屏成品（默认不提交 Git）
 ## 已知限制
 
 - search 和 weather 是可重复的本地 mock，不是实时服务；
+- read_docs 工具未实现
 - Context 使用字符预算近似 token，没有精确费用估算；
 - 非流式请求只能在 API 返回 usage 后判断 token 是否达到硬预算；
 - SQLite 适合本题的本地多终端演示，未做高并发压力测试；
