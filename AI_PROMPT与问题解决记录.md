@@ -358,13 +358,14 @@
 
 ### 成果
 
-- 状态：本地录屏与提交前准备已完成；公开仓库发布等待用户授权后执行。
+- 状态：已完成。
 - 已新增 `scripts/demo_recording.py` 与 `scripts/run_demo.ps1`，使用真实 DeepSeek 依次演示工具注册、直接回答、calculator、weather→todo、两个 session 隔离、进程内 Store/Agent 重建后的历史追问、滚动摘要、Trace 与离线测试。
 - 已新增 `scripts/record_demo.ps1` 作为 Windows Terminal 窗口捕获入口；因本机 Windows Terminal GPU 合成导致 `gdigrab` 成片黑屏，新增 `scripts/render_recording.py`，只基于真实演示产生的公开消息、工具事实、摘要和脱敏 Trace 生成纯终端回放。
 - 最终成品为 `artifacts/mini-agent-terminal-demo.mp4`：H.264、1600×900、约 95 秒、约 7 MB；已抽帧确认中文、Context、Trace 和 `35 passed, 4 deselected` 结尾正常。
 - `.gitignore` 已覆盖 `APIkey.txt`、`.env`、`.agent_data/`、数据库/WAL、Trace、Python 缓存与录屏二进制；录屏脚本仅临时读取 key，结束时清除环境变量。
 - pytest 已改用项目内 `--basetemp`，复验结果为 `35 passed, 4 deselected in 3.60s`，不再访问无权限的系统临时目录。
-- `README.md` 已补充录屏复现入口；公开仓库尚未创建，且当前目录尚未初始化 Git，因此未进行暂存、提交或推送。
+- 已创建公开仓库 [Mikalate/mini-agent-demo](https://github.com/Mikalate/mini-agent-demo)，本地 Git 已初始化并形成首个安全提交；远端 `main` 的完整实现提交为 `44747b2312050887adb694e1ce81b1f5857d1ad3`。
+- 远端共发布 51 个经扫描的源码、测试、fixture、文档和演示脚本文件；`APIkey.txt`、`.env`、`.agent_data/`、数据库/WAL、Trace 与 MP4 均未进入源码提交。
 
 ### 问题解决记录
 
@@ -372,7 +373,9 @@
 - 观察证据：先后出现脚本语法错误、`系统找不到指定的文件`、可播放但全黑的 MP4，以及 `PermissionError: pytest-of-Lenovo`；与此同时真实 DeepSeek 演示数据、Trace 和会话数据库均已正常产生。
 - 尝试方案：将 PowerShell 控制消息改为 ASCII 并使用无空格内部标题；尝试 Windows Terminal 与传统控制台窗口捕获；在确定 GPU 合成无法被本机 `gdigrab` 正确捕获后，改由真实演示产物生成终端回放；pytest 改用项目内独立临时目录。
 - 最终选择：保留可复现的真实演示脚本和窗口录制入口，同时以脱敏终端回放作为本机最终成片；回放代码明确不读取 `reasoning_content`，并抽检首段、中段、Context 与收尾画面。
-- 结果/剩余风险：本地录屏和测试已完成且无系统临时目录依赖；最终公开仓库的创建、Git 暂存、提交和推送属于外部发布操作，需用户明确授权并提供或确认仓库目标后完成。
+- 追加问题：本机 `git-remote-https.exe` 在凭据流程中崩溃，Git Credential Manager 又遇到 TLS 证书链错误，GitHub CLI 的设备登录也发生 TLS 握手超时。
+- 追加处理：保留本地提交，改用当前已认证的 GitHub 连接逐个创建内容 blob、完整 tree 和带父提交的 commit，再以非强制快进更新远端 `main`；随后用不带凭据的 `git ls-remote` 确认公开分支可读。
+- 结果/剩余风险：本地录屏、测试和公开源码仓库均已完成；MP4 保留为本地交付物，若招聘方要求可直接访问的视频 URL，仍需将该文件上传到其指定网盘或视频平台。
 
 ## 检查节点 3：提交前检查
 
@@ -386,11 +389,22 @@
 
 ### 成果
 
-- 状态：待执行。
+- 状态：已通过；第三阶段到此停止，不进入第 12 步可选增强。
+- 在新建的 `.agent_data/checkpoint3_venv` 干净虚拟环境中，严格按 README 执行 `python -m pip install -e ".[test]"`，依赖安装和 editable package 构建成功。
+- 使用该干净环境运行 `python -m mini_agent --help`，CLI 正常显示 `chat/sessions/history/trace` 四个入口。
+- 使用项目内 `--basetemp` 运行最终离线回归：`35 passed, 4 deselected in 2.58s`。
+- 只重复一个必要的真实 DeepSeek calculator 冒烟场景：`1 passed, 3 deselected in 3.54s`；key 仅临时注入子进程并在 finally 中清除。
+- 公开仓库为 [Mikalate/mini-agent-demo](https://github.com/Mikalate/mini-agent-demo)；无凭据读取 `main` 得到提交 `44747b2312050887adb694e1ce81b1f5857d1ad3`，证明仓库和分支可公开访问。
+- 最终录屏 `artifacts/mini-agent-terminal-demo.mp4` 已确认 H.264、1600×900、94.667 秒、7,308,951 字节；抽帧内容正常，视频内 API key 字节命中为 0。
+- 远端 51 个发布路径中禁止项为 0；提交前对真实 key 的精确扫描命中为 0，未发布 `.env`、`APIkey.txt`、数据库/WAL、敏感 Trace、运行缓存或完整隐藏推理。
 
 ### 问题解决记录
 
-- 待本检查节点完成后按统一结构补充。
+- 问题：检查节点需要同时验证干净安装、Windows 临时目录权限、真实 API、公开访问、录屏和远端内容安全；本机原生 Git 凭据链路还存在独立故障。
+- 观察证据：第一次在受限网络中安装构建依赖超时；此前默认 pytest 使用系统 Temp 时出现拒绝访问；原生 Git 推送产生 `git-remote-https.exe` 崩溃弹窗，但公开仓库的无凭据读取和 GitHub 已认证连接正常。
+- 尝试方案：为 pytest 指定项目内 `--basetemp`；允许干净 venv 仅下载 `pyproject.toml` 声明的依赖；Git 发布先尝试 GCM、GitHub CLI 和 SSH，均失败后使用已认证连接构造完整 Git tree/commit。
+- 最终选择：不降低 TLS 校验、不把 token 写入命令或文件、不强推；以项目内临时目录完成测试，以远端非强制快进完成发布，并分别验证远端 SHA、路径白名单和密钥零命中。
+- 结果/剩余风险：检查节点全部通过。Windows 本机的 Git HTTPS 凭据程序仍需用户日后单独修复，但不影响本次公开仓库、源码内容或最终验收结果。
 
 ## 12. 可选增强
 
