@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+APIkey.txt
+.agent_data/
+*.db
+*.db-shm
+*.db-wal
+trace.jsonl
+artifacts/*.mp4
+artifacts/*.mkv

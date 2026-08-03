@@ -1,0 +1,15 @@
+{
+  "上海": {
+    "default": {"date": "2026-08-03", "condition": "阵雨", "temperature_c": 31, "advice": "建议带伞"},
+    "2026-08-03": {"date": "2026-08-03", "condition": "阵雨", "temperature_c": 31, "advice": "建议带伞"}
+  },
+  "北京": {
+    "default": {"date": "2026-08-03", "condition": "晴", "temperature_c": 33, "advice": "注意防晒"},
+    "2026-08-03": {"date": "2026-08-03", "condition": "晴", "temperature_c": 33, "advice": "注意防晒"}
+  },
+  "深圳": {
+    "default": {"date": "2026-08-03", "condition": "多云", "temperature_c": 32, "advice": "天气闷热，注意补水"},
+    "2026-08-03": {"date": "2026-08-03", "condition": "多云", "temperature_c": 32, "advice": "天气闷热，注意补水"}
+  }
+}
+
