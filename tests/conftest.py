@@ -23,7 +23,7 @@ def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
         "MAX_PROTOCOL_ERRORS": "2",
         "MAX_CONSECUTIVE_TOOL_ERRORS": "3",
         "MAX_REPEATED_CALLS": "2",
-        "MAX_CONTEXT_CHARS": "30000",
+        "MAX_CONTEXT_TOKENS": "12000",
         "KEEP_RECENT_MESSAGES": "12",
         "AGENT_DATA_DIR": str(tmp_path / "agent-data"),
     }

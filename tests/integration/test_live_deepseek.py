@@ -33,9 +33,9 @@ class RecordingLLM:
         if callable(setter):
             setter(observer)
 
-    async def complete(self, messages, tools):
+    async def complete(self, messages, tools, **kwargs):
         self.requests.append(copy.deepcopy(messages))
-        return await self.inner.complete(messages, tools)
+        return await self.inner.complete(messages, tools, **kwargs)
 
 
 def live_runtime(tmp_path, monkeypatch, *, data_name="live-agent-data"):

@@ -12,6 +12,7 @@ dependencies = [
     "openai==1.108.1",
     "jsonschema==4.26.0",
     "rich==14.3.3",
+    "tokenizers==0.22.2",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +26,7 @@ include = ["mini_agent*", "data*"]
 
 [tool.setuptools.package-data]
 "mini_agent.sessions" = ["schema.sql"]
+"mini_agent.llm" = ["tokenizer/*.json"]
 "data" = ["*.json"]
 
 [tool.pytest.ini_options]

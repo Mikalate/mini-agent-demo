@@ -2,7 +2,7 @@
 
 一个完全运行在终端中的最小可用 Agent：DeepSeek 自主决定直接回答或调用工具，Python Runtime 负责校验、执行、回填、持久化和终止控制。
 
-当前验收结果：35 项默认离线测试与 4 项真实 DeepSeek smoke test 全部通过。
+当前验收结果：43 项默认离线测试与 4 项真实 DeepSeek smoke test 全部通过。
 
 公开仓库：[Mikalate/mini-agent-demo](https://github.com/Mikalate/mini-agent-demo)
 
@@ -67,13 +67,16 @@ CI 或不支持颜色的终端可添加 `--no-color`。
 | `DEEPSEEK_MAX_TOKENS` | `4096` | 单次 completion 上限 |
 | `DEEPSEEK_TIMEOUT_SECONDS` | `60` | 单次请求超时 |
 | `DEEPSEEK_MAX_RETRIES` | `3` | 429、500/503、连接/超时的总尝试上限 |
+| `DEEPSEEK_PRICE_PER_1M_INPUT` | `0.27` | 费用估算：输入单价（美元/百万 token，缓存未命中） |
+| `DEEPSEEK_PRICE_PER_1M_INPUT_CACHE_HIT` | `0.07` | 费用估算：缓存命中输入单价（美元/百万 token） |
+| `DEEPSEEK_PRICE_PER_1M_OUTPUT` | `1.10` | 费用估算：输出单价（美元/百万 token） |
 | `MAX_LLM_ROUNDS_PER_TURN` | `8` | 一次用户输入的模型决策轮数 |
 | `MAX_TOOL_CALLS_PER_TURN` | `12` | 一次 run 的工具调用上限 |
 | `MAX_PROTOCOL_ERRORS` | `2` | 空响应或损坏协议的纠正上限 |
 | `MAX_CONSECUTIVE_TOOL_ERRORS` | `3` | 连续工具失败上限 |
 | `MAX_REPEATED_CALLS` | `2` | 相同调用与结果的无进展阈值 |
 | `MAX_TOTAL_TOKENS_PER_TURN` | `0` | 可选 token 硬预算；`0` 表示关闭 |
-| `MAX_CONTEXT_CHARS` | `30000` | 触发上下文压缩的字符预算 |
+| `MAX_CONTEXT_TOKENS` | `12000` | 触发上下文压缩的 token 预算（打包的 DeepSeek tokenizer 估算） |
 | `KEEP_RECENT_MESSAGES` | `12` | 压缩时至少保留的最近协议消息数 |
 | `AGENT_DATA_DIR` | `.agent_data` | SQLite 与 run Trace 根目录 |
 
@@ -142,7 +145,7 @@ SQLite 使用 `(user_id, session_id)` 唯一键，所有消息、待办和 run �
 3. 最近未压缩的完整 role 消息；
 4. 当前 run 内完整的 assistant tool_calls 与对应 tool 结果。
 
-当序列化消息超过 `MAX_CONTEXT_CHARS` 时，ContextManager 只压缩最早的、已经闭合的完整用户回合。assistant tool_calls、`reasoning_content` 和对应 tool 消息不可拆分，当前 run 永不压缩。摘要成功后，摘要更新与旧消息 `is_compressed=1` 在同一事务中提交，原始消息不会删除；失败时数据库不变，本轮使用旧摘要和最近完整回合安全回退。
+当序列化消息超过 `MAX_CONTEXT_TOKENS`（token 数由打包在 `mini_agent/llm/tokenizer/` 的 DeepSeek 官方 BPE tokenizer 离线估算）时，ContextManager 只压缩最早的、已经闭合的完整用户回合。assistant tool_calls、`reasoning_content` 和对应 tool 消息不可拆分，当前 run 永不压缩。摘要成功后，摘要更新与旧消息 `is_compressed=1` 在同一事务中提交，原始消息不会删除；失败时数据库不变，本轮使用旧摘要和最近完整回合安全回退。
 
 Memory 的召回规则：
 
@@ -193,7 +196,7 @@ python -m pytest -m live
 
 当前测试结果：
 
-- 35 项离线测试通过，覆盖工具、Parser、Loop、Session、Context、Trace、预算、重试和两个 session E2E；
+- 43 项离线测试通过，覆盖工具、Parser、Loop、Session、Context、Trace、预算、重试、费用估算、token 估算、流式累积和两个 session E2E；
 - 4 项 live 测试通过，覆盖直接回答、calculator、search、weather→todo、todo add/list 和 session 恢复；
 - live 测试只断言结构和关键事实，不依赖完整自然语言措辞。
 
@@ -209,6 +212,8 @@ mini_agent/
   core/prompts.py        运行时 Prompt
   core/trace.py          事件、JSONL 与终端 Renderer
   llm/deepseek.py        DeepSeek API 适配器
+  llm/tokenizer.py       打包 DeepSeek tokenizer 的离线 token 计数
+  llm/tokenizer/         随包分发的 DeepSeek BPE 词表（离线使用）
   sessions/store.py      SQLite SessionStore
   tools/                 四个工具与 Registry
 tests/                   unit / integration / e2e / live
@@ -221,11 +226,11 @@ artifacts/               本地录屏成品（默认不提交 Git）
 
 - search 和 weather 是可重复的本地 mock，不是实时服务；
 - read_docs 工具未实现
-- Context 使用字符预算近似 token，没有精确费用估算；
-- 非流式请求只能在 API 返回 usage 后判断 token 是否达到硬预算；
+- Context 压缩阈值基于打包的 DeepSeek tokenizer 估算 token 数，但未计入 tools Schema 与 system 模板差异；费用基于 API usage 与可配置单价估算，默认单价是估算值，需按实际账单覆盖；
+- 流式请求在接收过程中实时估算输出 token，达到 `MAX_TOTAL_TOKENS_PER_TURN` 剩余预算时提前断流；精确 usage 仍在流末尾返回；
 - SQLite 适合本题的本地多终端演示，未做高并发压力测试；
 - 中断后可继续 session，但不会从未完成工具调用的中间指令自动恢复执行；
 - 数据库目前只有初始 schema，没有通用迁移框架；
-- 尚未实现流式输出、向量检索、真实搜索或真实天气，这些均属于 P1。
+- 流式输出已在传输层实现（后台流式累积，非逐字渲染）；向量检索、真实搜索或真实天气尚未实现，这些均属于 P1。
 
 运行时 Prompt 见 [PROMPTS.md](PROMPTS.md)，关键工程问题见 [PROBLEM_SOLVING.md](PROBLEM_SOLVING.md)，录屏及复现方法见 [RECORDING.md](RECORDING.md)，逐项 AI Prompt 与成果记录见 [AI_PROMPT与问题解决记录.md](AI_PROMPT与问题解决记录.md)。

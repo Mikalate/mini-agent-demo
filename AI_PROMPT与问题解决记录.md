@@ -423,3 +423,84 @@
 ### 问题解决记录
 
 - 若实际实施某项增强，再按统一结构补充；未实施则记录为明确的范围取舍。
+
+## 13. 后续改动
+
+本节记录 P0 提交之后，用户在新一轮会话中要求的后续改动。每项都包含正式 Prompt、成果与问题解决记录，沿用第 1-12 节的结构。
+
+### 13.1 费用估算（已知限制 3-B）
+
+### AI Prompt
+
+~~~text
+用户决定在已有提交基础上继续增强：按 3B → 3A → 4 的固定顺序处理 README“已知限制”中的第 3、4 条。本次只做 3-B“费用估算”：基于 API 返回的 usage 与可配置单价，为每次 run 计算估算费用，并写入 run_end Trace 与终端输出；不得改动 Agent Loop 的决策逻辑，不得引入第三方计费依赖；默认单价必须是可覆盖的估算值，并明确标注；同步更新 .env.example、README 与离线测试。
+~~~
+
+### 成果
+
+- 状态：已完成。
+- `Settings` 新增三个可配置单价：`DEEPSEEK_PRICE_PER_1M_INPUT`（默认 0.27）、`DEEPSEEK_PRICE_PER_1M_INPUT_CACHE_HIT`（默认 0.07）、`DEEPSEEK_PRICE_PER_1M_OUTPUT`（默认 1.10），单位均为美元/百万 token，标注为估算值。
+- `RunState` 新增 `cost_usd`；`Agent._accumulate_usage` 统一累计 prompt/completion/total token 与费用，输入部分区分缓存命中与未命中，缓存字段缺失时按未命中保守估算。
+- `run_end` Trace 事件新增 `cost_usd` 字段；终端 run 摘要行显示 `cost: $X.XXXXXX`。
+- `.env.example` 配置表、README 配置表与已知限制第 3 条同步更新。
+- 新增 3 项离线测试（三价累计、缓存字段缺失回退、零 usage 零费用）；全部 38 项离线测试通过。
+
+### 问题解决记录
+
+- 问题：已知限制第 3 条实际包含两个独立子问题——“Context 用字符预算近似 token”和“没有精确费用估算”，且用户询问“改成流式请求是否就能顺便解决”。
+- 观察证据：非流式响应自带精确 usage，费用估算只缺单价表与累计逻辑；字符→token 近似发生在请求发出前的上下文构建阶段；流式只影响响应侧传输，对这两者均无帮助。
+- 尝试方案：先做结论分析（流式不能解决 3），再把 3-B 与 3-A 拆开独立实施，费用估算先行。
+- 最终选择：费用基于 API usage 三类 token（缓存命中/未命中/输出）乘以可配置单价累计，零第三方依赖；默认单价取 DeepSeek 常见计价的估算值并允许覆盖。
+- 结果/剩余风险：38 项离线测试通过；默认单价可能偏离模型实际账单，需用户按账单覆盖；缓存字段缺失时按未命中保守估算，可能略微高估费用。3-A（token 精确估算）与 4（流式）尚未开始。
+
+### 13.2 上下文 token 精确估算（已知限制 3-A）
+
+### AI Prompt
+
+~~~text
+继续 3B 之后的第 3-A 项：把 ContextManager 的上下文压缩判据从“字符预算近似”替换为“token 预算精确估算”。用户已选定方案 B：下载 DeepSeek 官方 HF tokenizer 的 tokenizer.json，打包进仓库，用 tokenizers 库离线加载（不得在运行时联网下载）。要求：新增可复用的 token 计数模块与打包文件；配置项从 MAX_CONTEXT_CHARS 升级为 MAX_CONTEXT_TOKENS（默认 12000）；同步更新 Agent、CLI、demo 脚本、pyproject 打包配置、.env.example、README 与全部相关测试；保持离线测试全部离线通过。若模型词表与打包文件不一致，如实记录为剩余风险，不得声称完全精确。
+~~~
+
+### 成果
+
+- 状态：已完成。
+- 新增 `mini_agent/llm/tokenizer.py`：线程安全的懒加载单例，`Tokenizer.from_file` 离线加载打包词表；提供 `count_tokens` 与 `count_messages_tokens`（对将发送的 JSON 序列化文本计数）。
+- 打包词表 `mini_agent/llm/tokenizer/deepseek_tokenizer.json`（约 7.5 MB，BPE，128,815 词表），来自 DeepSeek 官方 HF 仓库 `deepseek-ai/DeepSeek-V3`（经 hf-mirror 下载，wget 断点续传）。
+- `ContextManager` 的 `max_context_chars`/`serialized_chars` 升级为 `max_context_tokens`/`serialized_tokens`；`MAX_CONTEXT_CHARS` 环境变量升级为 `MAX_CONTEXT_TOKENS`（默认 12000）。
+- `Agent` 的 `context_built` Trace 事件与 `cli.py` 的 `/context` 展示从字符改为 token 估算。
+- `pyproject.toml` 新增 `tokenizers==0.22.2` 依赖与 `mini_agent.llm = ["tokenizer/*.json"]` 打包配置；`.env.example`、README、`scripts/demo_recording.py` 同步更新。
+- 新增 4 项 tokenizer 离线测试；全部 42 项离线测试通过。
+
+### 问题解决记录
+
+- 问题：选官方 HF tokenizer 会引入网络下载依赖，与项目“默认测试完全离线”的验收口径冲突；用户先质疑“调用 API 不总归需要网络吗”。
+- 观察证据：项目离线指的是测试、非 API 命令与可复现性；HF 直连超时（curl exit 28），hf-mirror 可用但连接不稳定，wget 断点续传最终完整下载 7.5 MB；本地已装 `tokenizers 0.22.2`。
+- 尝试方案：tiktoken 近似（本地未安装）、经验系数、官方 HF 在线加载（破坏离线）、官方 HF 打包加载（做法 B，最终选择）。
+- 最终选择：把 tokenizer.json 打包进 `mini_agent/llm/tokenizer/`，用 `tokenizers` 库离线加载并做懒加载单例；压缩判据基于真实 BPE 编码的 token 数。
+- 结果/剩余风险：42 项离线测试全部通过；打包词表来自 `deepseek-ai/DeepSeek-V3`，若 `deepseek-v4-flash` 实际使用不同词表需替换该文件；估算未计入 tools Schema 与 system 模板的额外 token。4（流式）尚未开始。
+
+### 13.3 流式请求与实时 token 预算断流（已知限制 4）
+
+### AI Prompt
+
+~~~text
+继续 3A 之后的第 4 项：把 DeepSeek 适配器从非流式请求改为流式请求，使 Agent 能在接收过程中实时判断并提前终止超预算输出，解决“只能在 API 返回 usage 后判断 token 硬预算”的限制。要求：先对真实 DeepSeek API 验证流式行为（include_usage、reasoning_content、tool_calls delta、finish_reason 与 usage 的出现位置），再实现；保持 LLMResponse 返回结构与 Agent Loop 决策逻辑不变；流式累积的 content/reasoning_content/tool_calls 必须与现有非流式路径语义一致，reasoning_content 仍能跨轮回传；实时预算用打包 tokenizer 对 delta 计数，达到剩余预算时提前断流并复用现有 MAX_TOTAL_TOKENS_REACHED 终止语义；同步更新 Protocol、所有测试替身与适配器单测，保持离线测试全部通过。
+~~~
+
+### 成果
+
+- 状态：已完成。
+- 真实 API 验证结论：`stream_options={"include_usage": True}` 被 DeepSeek 接受；`usage` 与 `finish_reason` 只在最后一个 chunk 返回；`reasoning_content`、`content`、`tool_calls` 均按 delta 分片传输（tool_calls 按 index 合并 id/name/arguments）；`reasoning_effort` 合法值为 none/minimal/low/medium/high/xhigh/max（无 min）。
+- `DeepSeekClient.complete` 增加 `max_output_tokens` 可选参数；`_create_stream` 以 `stream=True` + `include_usage` 发起请求；`_accumulate_stream` 合并流式 delta 为与非流式同构的响应对象，并实时用打包 tokenizer 累计输出 token，超过剩余预算立即抛出 `LLMError(MAX_TOTAL_TOKENS_REACHED)`。
+- `Agent._remaining_output_budget` 把 `MAX_TOTAL_TOKENS_PER_TURN` 的剩余额度传给每次流式调用。
+- `LLMClient` Protocol 签名更新；全部测试替身 `complete` 增加 `**kwargs` 兼容；适配器单测重写为流式 chunk mock，新增预算断流测试。
+- 43 项离线测试与 4 项真实 live smoke test 全部通过（含 calculator 多轮、reasoning_content 轮回传、weather→todo、session 恢复）。
+- 官方文档核对（https://api-docs.deepseek.com/zh-cn/guides/thinking_mode）：`thinking` 参数经 `extra_body` 传入、流式下 `reasoning_content` 经 delta 分片累积、携带 tools 的请求必须完整回传 `reasoning_content`（否则 400）、无工具调用轮次的 `reasoning_content` 会被忽略、思考模式不支持 temperature/top_p 等——全部与项目实现一致；官方流式示例未提 `include_usage`，但真实 API 验证确认可用。
+
+### 问题解决记录
+
+- 问题：非流式请求必须等完整响应返回后才能根据 usage 判断 token 硬预算，超预算也无法中途停止。
+- 观察证据：流式验证显示 usage 与 finish_reason 只在最后一个 chunk；工具调用参数按 index 分片渐进到达；流式累积的 delta 文本并非 token 边界对齐。
+- 尝试方案：逐字渲染（终端改动面大、风险高）与后台流式（保持响应结构、Agent Loop 零决策改动）；实时计数用打包 tokenizer 对每个 delta 编码（跨 chunk 边界会偏大）或用整段重编码。
+- 最终选择：后台流式累积，保持 LLMResponse 结构与 Parser/Agent 不变；实时预算用 delta 逐段 tokenizer 计数，达到剩余预算即断流并复用现有 LLMError → MAX_TOTAL_TOKENS_REACHED 终止路径；偏大的计数方向是更早断流，属于保守方向。
+- 结果/剩余风险：43 项离线与 4 项 live 测试全部通过；delta 计数跨 chunk 边界可能略高估，导致断流略早于精确预算；尚未实现逐字渲染；断流时拿不到精确 usage（仅近似累计），README 已如实记录。

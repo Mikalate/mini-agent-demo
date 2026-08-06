@@ -44,6 +44,10 @@ class LLMError(RuntimeError):
 
 class LLMClient(Protocol):
     async def complete(
-        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        max_output_tokens: int | None = None,
     ) -> LLMResponse: ...
 

@@ -145,10 +145,12 @@ def _event_line(event: TraceEvent) -> tuple[str | None, str | None]:
     if kind == "error":
         return f"错误 [{data.get('code')}] {compact_text(data.get('message', ''))}", "red"
     if kind == "run_end":
+        cost = data.get("cost_usd", 0.0) or 0.0
         return (
             f"run: {event.run_id[:12]}  status: {data.get('status')}  "
             f"rounds: {data.get('rounds', 0)}  tools: {data.get('tools', 0)}  "
-            f"tokens: {data.get('tokens', 0)}  {data.get('duration_ms', 0)} ms",
+            f"tokens: {data.get('tokens', 0)}  cost: ${cost:.6f}  "
+            f"{data.get('duration_ms', 0)} ms",
             "bold" if data.get("status") == "completed" else "yellow",
         )
     return None, None

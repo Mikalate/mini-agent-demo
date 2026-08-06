@@ -136,13 +136,13 @@ def _show_context(agent: Agent, user_id: str, session_id: str) -> None:
         print("当前 session 不存在。")
         return
     messages = agent.context.build(user_id, session_id)
-    chars = len(json.dumps(messages, ensure_ascii=False, default=str))
+    tokens = agent.context.serialized_tokens(messages)
     uncompressed = agent.store.get_messages(
         user_id, session_id, include_compressed=False
     )
     print(
         f"messages={len(messages)}（含 system），未压缩历史={len(uncompressed)}，"
-        f"序列化字符={chars}/{agent.settings.max_context_chars}"
+        f"序列化 token≈{tokens}/{agent.settings.max_context_tokens}"
     )
     if session.summary:
         print(f"滚动摘要 v{session.summary_version}：{compact_text(session.summary, 600)}")
