@@ -230,3 +230,8 @@ artifacts/               本地录屏成品（默认不提交 Git）
 
 运行时 Prompt 见 [PROMPTS.md](PROMPTS.md)，关键工程问题见 [PROBLEM_SOLVING.md](PROBLEM_SOLVING.md)，录屏及复现方法见 [RECORDING.md](RECORDING.md)，逐项 AI Prompt 与成果记录见 [AI_PROMPT与问题解决记录.md](AI_PROMPT与问题解决记录.md)。完整功能演示录屏见 [artifacts/mini-agent-terminal-demo.mp4](artifacts/mini-agent-terminal-demo.mp4)（约 2 分钟，覆盖五个工具、多 session、压缩、read_docs、自进化经验与 Trace）。
 
+
+
+# 架构设计题
+
+详见 `./架构设计题.md`
