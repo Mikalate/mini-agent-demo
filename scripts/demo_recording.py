@@ -69,6 +69,17 @@ def show_tools() -> None:
     console.print(table)
 
 
+def show_experiences(store: SessionStore) -> None:
+    records = store.list_experiences(limit=10)
+    table = Table(title="经验库（错题集 / 正确经验）", show_lines=True)
+    table.add_column("类型", style="cyan")
+    table.add_column("触发键")
+    table.add_column("经验内容")
+    for record in records:
+        table.add_row(record.kind, record.trigger, record.content)
+    console.print(table)
+
+
 def show_context(store: SessionStore, user_id: str, session_id: str) -> None:
     session = store.get_session(user_id, session_id)
     messages = store.get_messages(user_id, session_id, include_compressed=False)
@@ -118,6 +129,7 @@ async def main() -> int:
     for session_id in ("window_1", "window_2", "compression_demo"):
         if store.get_session(user_id, session_id) is not None:
             store.reset_session(user_id, session_id)
+    store.clear_experiences()  # 录屏从种子经验开始，避免残留旧数据
 
     console.print(
         Panel(
@@ -128,7 +140,7 @@ async def main() -> int:
         )
     )
 
-    section("1. 启动与工具注册", "四个工具由统一 ToolRegistry 动态导出严格 Schema。")
+    section("1. 启动与工具注册", "五个工具由统一 ToolRegistry 动态导出严格 Schema。")
     show_tools()
 
     agent = build_agent(settings, store)
@@ -172,7 +184,7 @@ async def main() -> int:
     section("6. Context 压缩", "演示配置临时降低 token 阈值；默认仍为 12000。")
     compact_settings = replace(
         settings,
-        max_context_tokens=700,
+        max_context_tokens=800,
         keep_recent_messages=4,
     )
     compact_agent = build_agent(compact_settings, reopened_store)
@@ -180,12 +192,12 @@ async def main() -> int:
         "只回复“已记住”，不要调用工具。请记住：项目代号是晨星，"
         "交付偏好是回答简洁，并且尚未解决的事项是补充录屏说明。"
     )
-    for index in range(1, 5):
+    for index in range(1, 7):
         await ask(
             compact_agent,
             user_id,
             "compression_demo",
-            f"第 {index} 次确认。{facts}" + ("这是用于触发字符预算的演示文本。" * 12),
+            f"第 {index} 次确认。{facts}" + ("这是用于触发字符预算的演示文本。" * 6),
         )
     show_context(reopened_store, user_id, "compression_demo")
     await ask(
@@ -195,7 +207,41 @@ async def main() -> int:
         "根据历史摘要回答：项目代号和未解决事项分别是什么？",
     )
 
-    section("7. Trace 与测试", "Trace 只展示公开事件；最后运行默认离线测试。")
+    section("7. read_docs 与 search 精排", "read_docs 读取白名单文档；search 粗召回后轻量精排并返回摘要。")
+    await ask(
+        agent,
+        user_id,
+        "window_1",
+        "请调用 search 搜索“context compression”，并说出第一条结果标题。",
+    )
+    await ask(
+        agent,
+        user_id,
+        "window_1",
+        "请调用 read_docs 读取 readme 文档，用一两句话概括它的用途。",
+    )
+
+    section(
+        "8. 自进化经验",
+        "失败模式与成功路径自动沉淀进经验库，按错误码/工具序列跨 session 触发召回。",
+    )
+    await ask(
+        agent,
+        user_id,
+        "window_1",
+        "请查询南京天气（演示数据中没有这个城市，按工具返回提示处理）。",
+    )
+    show_experiences(reopened_store)
+    console.print(
+        Panel(
+            "说明：工具错误与成功路径在 run 结束后自动写入 experiences 表；"
+            "后续任意 session 触发相同错误码或工具序列时，会在 context 中注入低优先级经验段。",
+            title="自进化机制",
+            border_style="green",
+        )
+    )
+
+    section("9. Trace 与测试", "Trace 只展示公开事件；最后运行默认离线测试。")
     show_trace(settings, weather_result.state.run_id)
     console.print("\n[bold cyan]> python -m pytest -m \"not live\"[/bold cyan]")
     completed = subprocess.run(
@@ -215,7 +261,8 @@ async def main() -> int:
         return completed.returncode
     console.print(
         Panel(
-            "演示完成：真实 LLM、四个工具、多 session、恢复、Context、Trace 与测试均已展示。",
+            "演示完成：真实 LLM、五个工具、多 session、恢复、Context、read_docs、"
+            "自进化经验、Trace 与测试均已展示。",
             border_style="green",
         )
     )

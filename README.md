@@ -2,7 +2,7 @@
 
 一个完全运行在终端中的最小可用 Agent：DeepSeek 自主决定直接回答或调用工具，Python Runtime 负责校验、执行、回填、持久化和终止控制。
 
-当前验收结果：43 项默认离线测试与 4 项真实 DeepSeek smoke test 全部通过。
+当前验收结果：62 项默认离线测试与 5 项真实 DeepSeek smoke test 全部通过。
 
 公开仓库：[Mikalate/mini-agent-demo](https://github.com/Mikalate/mini-agent-demo)
 
@@ -32,14 +32,6 @@ python -m venv .venv
 python -m pip install -e ".[test]"
 Copy-Item .env.example .env
 ~~~
-
-编辑 `.env`，至少填写：
-
-~~~text
-DEEPSEEK_API_KEY=你的密钥
-~~~
-
-`.env`、`APIkey.txt`、`.agent_data/`、SQLite 文件和 Trace 均已加入 `.gitignore`。程序不会自动读取 `APIkey.txt`；该文件只是开发验收时使用的本地临时密钥文件，不能提交。
 
 ## 一条命令启动
 
@@ -105,16 +97,17 @@ python -m mini_agent history --user user_a --session window_1 --limit 20
 python -m mini_agent trace --user user_a --session window_1
 ~~~
 
-## 四个本地工具
+## 五个本地工具
 
 | 工具 | 能力 | 数据来源/安全边界 |
 |---|---|---|
 | `calculator` | 受限算术表达式 | AST 白名单，不使用 `eval` |
-| `search` | 搜索演示语料 | `data/search_corpus.json`，明确返回 `mock=true` |
+| `search` | 搜索演示语料 | `data/search_corpus.json`，明确返回 `mock=true`，空结果返回推荐关键词 |
 | `todo` | add/list/complete/delete | 身份由 ToolContext 注入，只操作当前 session |
-| `weather` | 查询演示天气 | `data/weather_fixture.json`，未知城市返回结构化错误 |
+| `weather` | 查询演示天气 | `data/weather_fixture.json`，未知城市/日期返回结构化错误（含可用城市列表） |
+| `read_docs` | 读取白名单文档（md/txt） | `data/docs_index.json` 白名单，只读仓库内注册文件，未知 id 返回可用列表 |
 
-search 和 weather 不访问互联网，不会把 fixture 结果描述成实时数据。
+search、weather 和 read_docs 不访问互联网，不会把 fixture 或本地文档结果描述成实时数据。
 
 ## Agent Loop
 
@@ -153,9 +146,10 @@ Memory 的召回规则：
 |---|---|---|
 | 最近对话 | 每次 LLM 调用 | 滚动摘要之后的原始 role 消息 |
 | 滚动摘要 | session 有摘要时 | 独立 system memory 段 |
+| 经验召回 | 本次 run 特征命中（最近错误码/工具序列） | 低优先级 system 段，模型不参与写入 |
 | todo 实时状态 | 模型判断需要准确状态时 | 调用 todo 后的 tool 消息 |
 | 工具 Schema | 每次 LLM 调用 | API 的 `tools` 参数 |
-| Trace | 从不召回 | 只用于观察和复现 |
+| Trace | 从不召回 | 只用于观察、复现和经验挖掘 |
 
 摘要不是事实数据库；可变的待办状态始终以 todo 工具查询结果为准，摘要与最新消息冲突时以最新消息为准。
 
@@ -196,8 +190,8 @@ python -m pytest -m live
 
 当前测试结果：
 
-- 43 项离线测试通过，覆盖工具、Parser、Loop、Session、Context、Trace、预算、重试、费用估算、token 估算、流式累积和两个 session E2E；
-- 4 项 live 测试通过，覆盖直接回答、calculator、search、weather→todo、todo add/list 和 session 恢复；
+- 62 项离线测试通过，覆盖工具、Parser、Loop、Session、Context、Trace、预算、重试、费用估算、token 估算、流式累积、read_docs、自进化经验、rerank 和两个 session E2E；
+- 5 项 live 测试通过，覆盖直接回答、calculator、search、read_docs、weather→todo、todo add/list 和 session 恢复；
 - live 测试只断言结构和关键事实，不依赖完整自然语言措辞。
 
 ## 项目结构
@@ -208,6 +202,7 @@ mini_agent/
   config.py              配置、预算和数据路径
   core/agent.py          手写 Agent Loop
   core/context.py        Context 选择与滚动摘要
+  core/experience.py     跨 session 经验库（错题/经验召回与沉淀）
   core/parser.py         模型响应解析
   core/prompts.py        运行时 Prompt
   core/trace.py          事件、JSONL 与终端 Renderer
@@ -215,7 +210,7 @@ mini_agent/
   llm/tokenizer.py       打包 DeepSeek tokenizer 的离线 token 计数
   llm/tokenizer/         随包分发的 DeepSeek BPE 词表（离线使用）
   sessions/store.py      SQLite SessionStore
-  tools/                 四个工具与 Registry
+  tools/                 五个工具与 Registry
 tests/                   unit / integration / e2e / live
 data/                    本地 search/weather fixture
 scripts/                 真实终端演示、窗口录制与脱敏回放
@@ -225,7 +220,7 @@ artifacts/               本地录屏成品（默认不提交 Git）
 ## 已知限制
 
 - search 和 weather 是可重复的本地 mock，不是实时服务；
-- read_docs 工具未实现
+- read_docs 只读仓库内白名单注册的 md/txt（默认 readme/prompts/problem-solving/demo-notes）；wheel 打包后 `PROMPTS.md`、`PROBLEM_SOLVING.md` 不在包内（README 因 pyproject `readme` 字段会随包），读取失败会返回明确错误；
 - Context 压缩阈值基于打包的 DeepSeek tokenizer 估算 token 数，但未计入 tools Schema 与 system 模板差异；费用基于 API usage 与可配置单价估算，默认单价是估算值，需按实际账单覆盖；
 - 流式请求在接收过程中实时估算输出 token，达到 `MAX_TOTAL_TOKENS_PER_TURN` 剩余预算时提前断流；精确 usage 仍在流末尾返回；
 - SQLite 适合本题的本地多终端演示，未做高并发压力测试；
@@ -233,4 +228,4 @@ artifacts/               本地录屏成品（默认不提交 Git）
 - 数据库目前只有初始 schema，没有通用迁移框架；
 - 流式输出已在传输层实现（后台流式累积，非逐字渲染）；向量检索、真实搜索或真实天气尚未实现，这些均属于 P1。
 
-运行时 Prompt 见 [PROMPTS.md](PROMPTS.md)，关键工程问题见 [PROBLEM_SOLVING.md](PROBLEM_SOLVING.md)，录屏及复现方法见 [RECORDING.md](RECORDING.md)，逐项 AI Prompt 与成果记录见 [AI_PROMPT与问题解决记录.md](AI_PROMPT与问题解决记录.md)。
+运行时 Prompt 见 [PROMPTS.md](PROMPTS.md)，关键工程问题见 [PROBLEM_SOLVING.md](PROBLEM_SOLVING.md)，录屏及复现方法见 [RECORDING.md](RECORDING.md)，逐项 AI Prompt 与成果记录见 [AI_PROMPT与问题解决记录.md](AI_PROMPT与问题解决记录.md)。完整功能演示录屏见 [artifacts/mini-agent-terminal-demo.mp4](artifacts/mini-agent-terminal-demo.mp4)（约 2 分钟，覆盖五个工具、多 session、压缩、read_docs、自进化经验与 Trace）。
