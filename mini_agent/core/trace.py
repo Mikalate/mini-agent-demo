@@ -135,7 +135,7 @@ def _event_line(event: TraceEvent) -> tuple[str | None, str | None]:
         args = compact_text(data.get("args", {}), 180)
         return f"  参数  {data.get('tool')} {args}", "dim"
     if kind == "tool_call_end":
-        mark = "✓" if data.get("ok") else "✗"
+        mark = "ok" if data.get("ok") else "err"
         duration = data.get("duration_ms", 0)
         summary = compact_text(data.get("result_summary", ""), 180)
         style = "green" if data.get("ok") else "red"

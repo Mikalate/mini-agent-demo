@@ -56,3 +56,15 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE INDEX IF NOT EXISTS idx_runs_session_started
 ON runs(session_pk, started_at);
 
+CREATE TABLE IF NOT EXISTS experiences (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('error', 'lesson')),
+    trigger TEXT NOT NULL,
+    content TEXT NOT NULL,
+    source_run_id TEXT,
+    hit_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE(kind, trigger)
+);
+

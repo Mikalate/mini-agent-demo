@@ -175,3 +175,30 @@ def test_context_below_budget_does_not_call_summary_llm(tmp_path) -> None:
     assert result.compacted_messages == 0
     assert not result.over_budget
     assert llm.requests == []
+
+
+def test_summary_quality_warning_flags_fact_loss(tmp_path) -> None:
+    from mini_agent.core.context import summary_quality_warning
+
+    assert summary_quality_warning("苹果 苹果 苹果 香蕉", "苹果") is None  # 保留 1/2
+    warning = summary_quality_warning("苹果 苹果 苹果 香蕉 香蕉", "与事实无关的摘要")
+    assert warning is not None
+    assert "高频词" in warning
+
+
+def test_compact_result_carries_summary_quality_warning(tmp_path) -> None:
+    store = SessionStore(tmp_path / "agent.db")
+    add_closed_turn(store, "old-1", "旧内容" * 120, "结果是 42", tool_chain=True)
+    add_closed_turn(store, "recent-1", "最近事实" * 80, "最近回答")
+    start_current_turn(store, "current", "当前问题")
+    manager = ContextManager(store, max_context_tokens=500, keep_recent_messages=3)
+
+    result = asyncio.run(
+        manager.prepare(
+            "user", "session", current_run_id="current", llm=SummaryLLM()
+        )
+    )
+
+    # 摘要 SUMMARY 不含高频词“旧内容”，应产生质量告警但不阻断
+    assert result.compacted_messages > 0
+    assert result.summary_quality_warning is not None

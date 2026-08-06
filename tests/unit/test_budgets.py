@@ -172,6 +172,7 @@ def test_fatal_api_error_and_cancellation_have_determined_status(settings, tmp_p
     assert fatal_result.status == "incomplete"
     assert cancel_result.status == "interrupted"
     assert cancel_result.error_code == "INTERRUPTED"
+    assert "继续" in cancel_result.content
     assert [message.role for message in cancel_store.get_messages("user", "cancel")] == [
         "user"
     ]
@@ -226,3 +227,38 @@ def test_cost_is_zero_without_usage(settings, tmp_path) -> None:
     result = asyncio.run(agent.run_turn("user", "cost0", "回答"))
 
     assert result.state.cost_usd == 0.0
+
+
+def test_run_level_retries_once_for_transient_first_call(settings, tmp_path) -> None:
+    transient = LLMError("LLM_TIMEOUT", "瞬时失败", retryable=True, attempts=1)
+    agent, _ = make_agent(settings, tmp_path, FakeLLM([transient, _final()]))
+
+    result = asyncio.run(agent.run_turn("user", "retry", "回答"))
+
+    assert result.status == "completed"
+    assert result.state.round == 1  # 重试后一次成功
+
+
+def test_run_level_retry_happens_only_once(settings, tmp_path) -> None:
+    transient = LLMError("LLM_TIMEOUT", "瞬时失败", retryable=True, attempts=1)
+    agent, _ = make_agent(settings, tmp_path, FakeLLM([transient, transient]))
+
+    result = asyncio.run(agent.run_turn("user", "retry2", "回答"))
+
+    assert result.status == "incomplete"
+    assert result.error_code == "LLM_TIMEOUT"
+    assert result.state.round == 1  # 重试一次后再失败即终止
+
+
+def test_run_level_retry_skipped_after_tool_execution(settings, tmp_path) -> None:
+    transient = LLMError("LLM_TIMEOUT", "瞬时失败", retryable=True, attempts=1)
+    agent, _ = make_agent(
+        settings, tmp_path, FakeLLM([tool_call("one", "6*7"), transient])
+    )
+
+    result = asyncio.run(agent.run_turn("user", "retry3", "计算"))
+
+    assert result.status == "incomplete"
+    assert result.error_code == "LLM_TIMEOUT"
+    assert result.state.round == 2  # 已执行工具后不自动重试
+    assert result.state.tool_step == 1

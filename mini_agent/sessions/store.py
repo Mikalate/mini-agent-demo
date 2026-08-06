@@ -9,7 +9,14 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Iterator, Sequence
 
-from mini_agent.core.models import Message, RunState, SessionRecord, TodoRecord, ToolCall
+from mini_agent.core.models import (
+    ExperienceRecord,
+    Message,
+    RunState,
+    SessionRecord,
+    TodoRecord,
+    ToolCall,
+)
 
 
 class SessionNotFoundError(LookupError):
@@ -406,3 +413,148 @@ class SessionStore:
                 (todo_id, user_id, session_id),
             )
             return cursor.rowcount == 1
+
+    @staticmethod
+    def _experience_from_row(row: sqlite3.Row) -> ExperienceRecord:
+        return ExperienceRecord(
+            id=row["id"],
+            kind=row["kind"],
+            trigger=row["trigger"],
+            content=row["content"],
+            source_run_id=row["source_run_id"],
+            hit_count=row["hit_count"],
+            created_at=_parse_datetime(row["created_at"]),
+            updated_at=_parse_datetime(row["updated_at"]),
+        )
+
+    def upsert_experience(self, experience: ExperienceRecord) -> ExperienceRecord:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO experiences(id, kind, trigger, content, source_run_id)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(kind, trigger) DO UPDATE SET
+                    content = excluded.content,
+                    source_run_id = excluded.source_run_id,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                """,
+                (
+                    experience.id,
+                    experience.kind,
+                    experience.trigger,
+                    experience.content,
+                    experience.source_run_id,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM experiences WHERE kind = ? AND trigger = ?",
+                (experience.kind, experience.trigger),
+            ).fetchone()
+            assert row is not None
+            return self._experience_from_row(row)
+
+    def get_experiences(
+        self,
+        triggers: Sequence[str],
+        *,
+        limit: int = 8,
+    ) -> list[ExperienceRecord]:
+        if not triggers:
+            return []
+        placeholders = ",".join("?" for _ in triggers)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM experiences
+                WHERE trigger IN ({placeholders})
+                ORDER BY hit_count DESC, updated_at DESC
+                LIMIT ?
+                """,
+                [*triggers, limit],
+            ).fetchall()
+            return [self._experience_from_row(row) for row in rows]
+
+    def list_experiences(self, *, limit: int = 50) -> list[ExperienceRecord]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM experiences ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [self._experience_from_row(row) for row in rows]
+
+    def increment_experience_hit(self, ids: Sequence[str]) -> None:
+        ids = list(dict.fromkeys(ids))
+        if not ids:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        with self._connect() as connection:
+            connection.execute(
+                f"""
+                UPDATE experiences
+                SET hit_count = hit_count + 1
+                WHERE id IN ({placeholders})
+                """,
+                ids,
+            )
+
+    def count_experiences(self) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM experiences"
+            ).fetchone()
+            return int(row["count"])
+
+    def clear_experiences(self) -> int:
+        """Remove all experiences (used by demo scripts for reproducibility)."""
+        with self._connect() as connection:
+            cursor = connection.execute("DELETE FROM experiences")
+            return cursor.rowcount
+
+    def latest_run_error(
+        self, user_id: str, session_id: str | None = None
+    ) -> str | None:
+        """Most recent run error for a user; scoped to one session when given."""
+        conditions = ["s.user_id = ?", "r.error IS NOT NULL"]
+        parameters: list[object] = [user_id]
+        if session_id is not None:
+            conditions.append("s.session_id = ?")
+            parameters.append(session_id)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"""
+                SELECT r.error FROM runs AS r
+                JOIN sessions AS s ON s.id = r.session_pk
+                WHERE {' AND '.join(conditions)}
+                ORDER BY r.started_at DESC, r.rowid DESC
+                LIMIT 1
+                """,
+                parameters,
+            ).fetchone()
+            return str(row["error"]) if row is not None else None
+
+    def recent_tool_names(
+        self, user_id: str, session_id: str | None = None, *, limit: int = 8
+    ) -> list[str]:
+        conditions = ["s.user_id = ?", "m.tool_calls_json IS NOT NULL"]
+        parameters: list[object] = [user_id]
+        if session_id is not None:
+            conditions.append("s.session_id = ?")
+            parameters.append(session_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT m.tool_calls_json FROM messages AS m
+                JOIN sessions AS s ON s.id = m.session_pk
+                WHERE {' AND '.join(conditions)}
+                ORDER BY m.id DESC
+                LIMIT ?
+                """,
+                [*parameters, limit],
+            ).fetchall()
+        names: list[str] = []
+        for row in reversed(rows):
+            for call in json.loads(row["tool_calls_json"]) or []:
+                name = call.get("name")
+                if name and name not in names:
+                    names.append(name)
+        return names

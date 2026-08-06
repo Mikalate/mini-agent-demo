@@ -136,11 +136,18 @@ class ToolRegistry:
 
 def build_default_registry() -> ToolRegistry:
     from mini_agent.tools.calculator import calculator_spec
+    from mini_agent.tools.read_docs import read_docs_spec
     from mini_agent.tools.search import search_spec
     from mini_agent.tools.todo import todo_spec
     from mini_agent.tools.weather import weather_spec
 
     registry = ToolRegistry()
-    for spec in (calculator_spec(), search_spec(), todo_spec(), weather_spec()):
+    for spec in (
+        calculator_spec(),
+        search_spec(),
+        todo_spec(),
+        weather_spec(),
+        read_docs_spec(),
+    ):
         registry.register(spec)
     return registry

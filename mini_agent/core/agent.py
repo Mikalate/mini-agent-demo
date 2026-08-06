@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import sqlite3
 import time
 import uuid
@@ -11,6 +12,7 @@ from typing import Any, Literal
 
 from mini_agent.config import Settings
 from mini_agent.core.context import ContextManager
+from mini_agent.core.experience import ExperienceManager
 from mini_agent.core.models import Message, RunState, ToolCall
 from mini_agent.core.parser import ParseIssue, ParsedAssistant, ParsedToolCall, parse_response
 from mini_agent.core.trace import RunTrace, TraceSink, compact_text, create_run_trace
@@ -18,6 +20,8 @@ from mini_agent.llm.base import LLMClient, LLMError, LLMResponse, LLMUsage
 from mini_agent.sessions.store import SessionStore
 from mini_agent.tools.base import ToolContext, ToolErrorInfo, ToolResult
 from mini_agent.tools.registry import ToolRegistry
+
+LOGGER = logging.getLogger(__name__)
 
 
 RunStatus = Literal["completed", "incomplete", "interrupted"]
@@ -42,6 +46,7 @@ class Agent:
         registry: ToolRegistry,
         store: SessionStore,
         context: ContextManager | None = None,
+        experience: ExperienceManager | None = None,
         trace_renderer: TraceSink | None = None,
         trace_sinks: tuple[TraceSink, ...] = (),
     ):
@@ -49,15 +54,31 @@ class Agent:
         self.llm = llm
         self.registry = registry
         self.store = store
+        self.experience = experience or ExperienceManager(store)
         self.context = context or ContextManager(
             store,
             max_context_tokens=settings.max_context_tokens,
             keep_recent_messages=settings.keep_recent_messages,
+            experience=self.experience,
         )
         self.trace_renderer = trace_renderer
         self.trace_sinks = trace_sinks
 
     async def run_turn(self, user_id: str, session_id: str, user_text: str) -> RunResult:
+        result = await self._run_turn_core(user_id, session_id, user_text)
+        if self.experience is not None:
+            try:
+                self.experience.write(
+                    result.state,
+                    status=result.status,
+                    error_code=result.error_code,
+                    content=result.content,
+                )
+            except Exception:
+                LOGGER.exception("experience 沉淀失败，不影响本次结果")
+        return result
+
+    async def _run_turn_core(self, user_id: str, session_id: str, user_text: str) -> RunResult:
         user_text = user_text.strip()
         if not user_text:
             raise ValueError("用户输入不能为空。")
@@ -134,6 +155,12 @@ class Agent:
                 fallback_used=context_result.fallback_used,
                 summary_version=context_result.summary_version,
             )
+            if context_result.summary_quality_warning:
+                trace.emit(
+                    "context_summary_quality",
+                    code="SUMMARY_QUALITY_LOW",
+                    message=context_result.summary_quality_warning,
+                )
             if context_result.over_budget:
                 return self._finish_incomplete(
                     state,
@@ -174,6 +201,7 @@ class Agent:
         protocol_errors = 0
         consecutive_tool_errors = 0
         signature_counts: dict[str, int] = {}
+        run_retries = 0
 
         while state.round < self.settings.max_llm_rounds_per_turn:
             if self._token_budget_reached(state):
@@ -203,6 +231,24 @@ class Agent:
                     error_code=exc.code,
                     duration_ms=self._elapsed_ms(llm_started),
                 )
+                if (
+                    exc.retryable
+                    and run_retries == 0
+                    and state.round == 1
+                    and state.tool_step == 0
+                ):
+                    # Run-level safety net: retry once when the very first model
+                    # call fails before any side-effect tool has run.
+                    run_retries += 1
+                    state.round -= 1
+                    trace.emit(
+                        "retry",
+                        round=1,
+                        code=exc.code,
+                        scope="run_retry_once",
+                        message=f"首次模型调用瞬时失败（{exc.code}），已自动重试一次。",
+                    )
+                    continue
                 return self._finish_incomplete(
                     state, exc.code, exc.message, trace, started
                 )
@@ -563,7 +609,7 @@ class Agent:
         state.status = "interrupted"
         content = (
             "本次任务已中断；已经完成的消息和工具结果均已保留，"
-            "可以在当前 session 中继续。"
+            "可以在当前 session 中继续。可输入“继续”或重述目标来恢复任务。"
         )
         self.store.finish_run(state, error="INTERRUPTED")
         trace.emit("error", code="INTERRUPTED", message="用户中断了当前任务。")

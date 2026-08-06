@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Sequence
 
+from mini_agent.core.experience import ExperienceManager
 from mini_agent.core.models import Message
 from mini_agent.core.prompts import (
     SUMMARY_SYSTEM_PROMPT,
@@ -17,6 +19,34 @@ from mini_agent.sessions.store import SessionStore
 
 
 _SUMMARY_HEADINGS = ("## 已确认事实", "## 用户偏好", "## 工具结果", "## 未解决事项")
+_STOPWORDS = {
+    "的", "了", "是", "在", "和", "与", "一", "个", "我", "你", "请",
+    "用户", "助手", "工具", "结果", "回答", "任务", "需要", "可以", "要",
+    "把", "对", "为", "这", "那", "就", "都", "也", "还", "很", "有",
+    "没有", "不", "是", "完成", "调用", "我们", "问题",
+}
+
+
+def _quality_terms(text: str, limit: int = 10) -> list[str]:
+    words = re.findall(r"[a-z0-9_]{2,}|[\u4e00-\u9fff]{2,}", text.casefold())
+    freq: dict[str, int] = {}
+    for word in words:
+        if word in _STOPWORDS:
+            continue
+        freq[word] = freq.get(word, 0) + 1
+    return [word for word, _ in sorted(freq.items(), key=lambda item: -item[1])[:limit]]
+
+
+def summary_quality_warning(source: str, summary: str) -> str | None:
+    """Return a warning when high-frequency facts from the source are missing."""
+    terms = _quality_terms(source)
+    if not terms:
+        return None
+    kept = [term for term in terms if term in summary]
+    ratio = len(kept) / len(terms)
+    if ratio < 0.4:
+        return f"摘要可能丢失关键事实：仅保留 {len(kept)}/{len(terms)} 个高频词。"
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +60,7 @@ class ContextBuildResult:
     over_budget: bool = False
     attempts: int = 0
     usage: LLMUsage = field(default_factory=LLMUsage)
+    summary_quality_warning: str | None = None
 
 
 class ContextManager:
@@ -41,12 +72,14 @@ class ContextManager:
         *,
         max_context_tokens: int = 12_000,
         keep_recent_messages: int = 12,
+        experience: Any | None = None,
     ):
         if max_context_tokens < 1 or keep_recent_messages < 1:
             raise ValueError("context 预算和最近消息数必须大于 0。")
         self.store = store
         self.max_context_tokens = max_context_tokens
         self.keep_recent_messages = keep_recent_messages
+        self.experience = experience
 
     def build(self, user_id: str, session_id: str) -> list[dict[str, Any]]:
         session = self.store.get_session(user_id, session_id)
@@ -69,7 +102,11 @@ class ContextManager:
         history = self.store.get_messages(
             user_id, session_id, include_compressed=False
         )
-        full = self._compose(session.summary, history)
+        extra_system = ""
+        if self.experience is not None:
+            records = self.experience.read(user_id, session_id)
+            extra_system = ExperienceManager.format_system_segment(records)
+        full = self._compose(session.summary, history, extra_system=extra_system)
         if count_messages_tokens(full) <= self.max_context_tokens:
             return ContextBuildResult(
                 messages=full,
@@ -98,7 +135,9 @@ class ContextManager:
         fallback_history = [
             message for turn in turns[compact_count:] for message in turn
         ]
-        fallback_messages = self._compose(session.summary, fallback_history)
+        fallback_messages = self._compose(
+            session.summary, fallback_history, extra_system=extra_system
+        )
         summary_source = self._summary_source(candidate_turns)
         max_source_chars = max(4_000, self.max_context_tokens * 2)
         if len(summary_source) > max_source_chars:
@@ -127,6 +166,7 @@ class ContextManager:
             ]
             if len(message_ids) != sum(len(turn) for turn in candidate_turns):
                 raise ValueError("存在尚未持久化的消息，不能执行压缩。")
+            quality_warning = summary_quality_warning(summary_source, summary)
             compacted = self.store.compact_messages(
                 user_id, session_id, message_ids, summary
             )
@@ -153,6 +193,7 @@ class ContextManager:
             over_budget=count_messages_tokens(final_messages) > self.max_context_tokens,
             attempts=response.attempts,
             usage=response.usage,
+            summary_quality_warning=quality_warning,
         )
 
     def _fallback_result(
@@ -174,7 +215,11 @@ class ContextManager:
         )
 
     def _compose(
-        self, summary: str, history: list[Message]
+        self,
+        summary: str,
+        history: list[Message],
+        *,
+        extra_system: str = "",
     ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT}
@@ -190,6 +235,8 @@ class ContextManager:
                     ),
                 }
             )
+        if extra_system.strip():
+            messages.append({"role": "system", "content": extra_system.strip()})
         messages.extend(self.message_to_api(message) for message in history)
         return messages
 

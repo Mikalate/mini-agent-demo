@@ -114,6 +114,22 @@ def test_real_local_search_is_used_and_summarized(tmp_path, monkeypatch) -> None
     assert any(word in result.content.lower() for word in ["摘要", "最近", "summary"])
 
 
+def test_real_read_docs_reads_project_readme(tmp_path, monkeypatch) -> None:
+    _, store, _, agent = live_runtime(tmp_path, monkeypatch)
+
+    result = asyncio.run(
+        agent.run_turn(
+            "live_user",
+            "read_docs",
+            "请调用 read_docs 读取 readme 文档，然后用一两句话概括它的用途。",
+        )
+    )
+
+    assert result.status == "completed"
+    assert "read_docs" in tool_names(store, "live_user", "read_docs")
+    assert any(word in result.content.lower() for word in ["agent", "助手", "终端"])
+
+
 def test_real_weather_todo_two_sessions_and_recovery(tmp_path, monkeypatch) -> None:
     settings, store, _, agent = live_runtime(tmp_path, monkeypatch)
 
