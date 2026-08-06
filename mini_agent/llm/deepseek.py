@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import random
-from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
+from collections.abc import Callable
 
 from openai import (
     APIConnectionError,
@@ -16,6 +17,7 @@ from openai import (
 
 from mini_agent.config import Settings
 from mini_agent.llm.base import LLMError, LLMResponse, LLMUsage
+from mini_agent.llm.tokenizer import count_tokens
 
 
 class DeepSeekClient:
@@ -44,12 +46,18 @@ class DeepSeekClient:
         self._retry_observer = observer
 
     async def complete(
-        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        max_output_tokens: int | None = None,
     ) -> LLMResponse:
         max_attempts = max(1, self.settings.deepseek_max_retries)
         for attempt in range(1, max_attempts + 1):
             try:
-                response = await asyncio.to_thread(self._create, messages, tools)
+                response = await asyncio.to_thread(
+                    self._create_stream, messages, tools, max_output_tokens
+                )
                 return self._normalize(response, attempts=attempt)
             except Exception as exc:
                 error = self._classify_error(exc, attempts=attempt)
@@ -78,12 +86,18 @@ class DeepSeekClient:
                 await self._sleep(delay)
         raise AssertionError("unreachable")
 
-    def _create(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]):
+    def _create_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_output_tokens: int | None,
+    ) -> Any:
         kwargs: dict[str, Any] = {
             "model": self.settings.deepseek_model,
             "messages": messages,
             "max_tokens": self.settings.deepseek_max_tokens,
-            "stream": False,
+            "stream": True,
+            "stream_options": {"include_usage": True},
             "extra_body": {"thinking": {"type": self.settings.deepseek_thinking}},
         }
         if tools:
@@ -91,7 +105,109 @@ class DeepSeekClient:
         if self.settings.deepseek_thinking == "enabled":
             kwargs["reasoning_effort"] = self.settings.deepseek_reasoning_effort
         # tool_choice is deliberately omitted: DeepSeek must choose reply vs tool.
-        return self._client.chat.completions.create(**kwargs)
+        stream = self._client.chat.completions.create(**kwargs)
+        return self._accumulate_stream(stream, max_output_tokens)
+
+    @staticmethod
+    def _accumulate_stream(stream: Any, max_output_tokens: int | None) -> Any:
+        """Consume an SSE stream into the same shape as a non-streaming response.
+
+        `reasoning_content` and `tool_calls` arrive as deltas; finish_reason and
+        usage only appear on the final chunk. When a max output budget is set,
+        streamed deltas are counted and the stream is aborted before the budget
+        is exceeded.
+        """
+
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_calls: dict[int, dict[str, Any]] = {}
+        finish_reason: str | None = None
+        usage_raw: dict[str, Any] | None = None
+        budget_tokens = 0
+
+        for chunk in stream:
+            if chunk.usage is not None:
+                usage_raw = (
+                    chunk.usage.model_dump()
+                    if hasattr(chunk.usage, "model_dump")
+                    else dict(chunk.usage)
+                )
+                if chunk.choices and chunk.choices[0].finish_reason:
+                    finish_reason = chunk.choices[0].finish_reason
+                continue
+            if not chunk.choices:
+                continue
+            choice = chunk.choices[0]
+            delta = choice.delta
+            delta_text = ""
+            if delta.content:
+                content_parts.append(delta.content)
+                delta_text += delta.content
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning:
+                reasoning_parts.append(reasoning)
+                delta_text += reasoning
+            if delta.tool_calls:
+                for call in delta.tool_calls:
+                    entry = tool_calls.setdefault(
+                        call.index, {"id": "", "name": "", "args": []}
+                    )
+                    if call.id:
+                        entry["id"] = call.id
+                    if call.function and call.function.name:
+                        entry["name"] = call.function.name
+                    if call.function and call.function.arguments:
+                        entry["args"].append(call.function.arguments)
+                        delta_text += call.function.arguments
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+            if max_output_tokens is not None and delta_text:
+                budget_tokens += count_tokens(delta_text)
+                if budget_tokens >= max_output_tokens:
+                    raise LLMError(
+                        "MAX_TOTAL_TOKENS_REACHED",
+                        "流式响应已达到 token 预算，已提前终止本轮生成。",
+                        retryable=False,
+                        attempts=1,
+                    )
+
+        assistant_message: dict[str, Any] = {
+            "role": "assistant",
+            "content": "".join(content_parts) or None,
+        }
+        if reasoning_parts:
+            assistant_message["reasoning_content"] = "".join(reasoning_parts)
+        if tool_calls:
+            assistant_message["tool_calls"] = [
+                {
+                    "id": entry["id"],
+                    "type": "function",
+                    "function": {"name": entry["name"], "arguments": "".join(entry["args"])},
+                }
+                for entry in tool_calls.values()
+            ]
+
+        class _StreamMessage:
+            def __init__(self, data: dict[str, Any]):
+                self.__dict__.update(data)
+
+            def model_dump(self, *, exclude_none: bool = True) -> dict[str, Any]:
+                return {
+                    key: value
+                    for key, value in self.__dict__.items()
+                    if value is not None
+                }
+
+        choice = SimpleNamespace(
+            message=_StreamMessage(assistant_message),
+            finish_reason=finish_reason,
+        )
+        return SimpleNamespace(
+            id=None,
+            model=None,
+            choices=[choice],
+            usage=SimpleNamespace(model_dump=lambda: usage_raw or {}),
+        )
 
     @staticmethod
     def _normalize(response: Any, *, attempts: int) -> LLMResponse:

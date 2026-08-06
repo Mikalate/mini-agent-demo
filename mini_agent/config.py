@@ -65,6 +65,17 @@ def _optional_positive_int_env(name: str) -> int | None:
     return value
 
 
+def _non_negative_float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} 必须是数字，当前值为 {raw!r}。") from exc
+    if value < 0:
+        raise ConfigError(f"{name} 必须不小于 0，当前值为 {value}。")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     deepseek_api_key: str | None
@@ -75,13 +86,16 @@ class Settings:
     deepseek_max_tokens: int
     deepseek_timeout_seconds: int
     deepseek_max_retries: int
+    deepseek_price_input_per_1m: float
+    deepseek_price_input_cache_hit_per_1m: float
+    deepseek_price_output_per_1m: float
     max_llm_rounds_per_turn: int
     max_tool_calls_per_turn: int
     max_protocol_errors: int
     max_consecutive_tool_errors: int
     max_repeated_calls: int
     max_total_tokens_per_turn: int | None
-    max_context_chars: int
+    max_context_tokens: int
     keep_recent_messages: int
     data_dir: Path
     database_path: Path
@@ -112,6 +126,15 @@ class Settings:
             deepseek_max_tokens=_int_env("DEEPSEEK_MAX_TOKENS", 4096),
             deepseek_timeout_seconds=_int_env("DEEPSEEK_TIMEOUT_SECONDS", 60),
             deepseek_max_retries=_int_env("DEEPSEEK_MAX_RETRIES", 3, minimum=0),
+            deepseek_price_input_per_1m=_non_negative_float_env(
+                "DEEPSEEK_PRICE_PER_1M_INPUT", 0.27
+            ),
+            deepseek_price_input_cache_hit_per_1m=_non_negative_float_env(
+                "DEEPSEEK_PRICE_PER_1M_INPUT_CACHE_HIT", 0.07
+            ),
+            deepseek_price_output_per_1m=_non_negative_float_env(
+                "DEEPSEEK_PRICE_PER_1M_OUTPUT", 1.10
+            ),
             max_llm_rounds_per_turn=_int_env("MAX_LLM_ROUNDS_PER_TURN", 8),
             max_tool_calls_per_turn=_int_env("MAX_TOOL_CALLS_PER_TURN", 12),
             max_protocol_errors=_int_env("MAX_PROTOCOL_ERRORS", 2),
@@ -120,7 +143,7 @@ class Settings:
             max_total_tokens_per_turn=_optional_positive_int_env(
                 "MAX_TOTAL_TOKENS_PER_TURN"
             ),
-            max_context_chars=_int_env("MAX_CONTEXT_CHARS", 30_000),
+            max_context_tokens=_int_env("MAX_CONTEXT_TOKENS", 12_000),
             keep_recent_messages=_int_env("KEEP_RECENT_MESSAGES", 12),
             data_dir=data_dir,
             database_path=data_dir / "agent.db",

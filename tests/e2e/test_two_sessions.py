@@ -42,7 +42,7 @@ class ScriptedLLM:
         self.responses = list(responses)
         self.requests = []
 
-    async def complete(self, messages, tools):
+    async def complete(self, messages, tools, **kwargs):
         self.requests.append(copy.deepcopy(messages))
         return self.responses.pop(0)
 

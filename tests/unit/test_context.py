@@ -114,7 +114,7 @@ def test_context_compacts_whole_closed_tool_chain_and_keeps_recent(tmp_path) -> 
     add_closed_turn(store, "recent-1", "请记住偏好" + "新内容" * 80, "回答简洁")
     start_current_turn(store, "current", "继续当前任务")
     llm = SummaryLLM()
-    manager = ContextManager(store, max_context_chars=700, keep_recent_messages=3)
+    manager = ContextManager(store, max_context_tokens=500, keep_recent_messages=3)
 
     result = asyncio.run(
         manager.prepare(
@@ -142,7 +142,7 @@ def test_context_summary_failure_keeps_database_and_uses_safe_fallback(tmp_path)
     )
     add_closed_turn(store, "recent-1", "最近事实" * 80, "最近回答")
     start_current_turn(store, "current", "当前问题")
-    manager = ContextManager(store, max_context_chars=650, keep_recent_messages=3)
+    manager = ContextManager(store, max_context_tokens=500, keep_recent_messages=3)
 
     result = asyncio.run(
         manager.prepare(
@@ -164,7 +164,7 @@ def test_context_below_budget_does_not_call_summary_llm(tmp_path) -> None:
     store = SessionStore(tmp_path / "agent.db")
     start_current_turn(store, "current", "短消息")
     llm = SummaryLLM()
-    manager = ContextManager(store, max_context_chars=10_000, keep_recent_messages=2)
+    manager = ContextManager(store, max_context_tokens=2_000, keep_recent_messages=2)
 
     result = asyncio.run(
         manager.prepare(

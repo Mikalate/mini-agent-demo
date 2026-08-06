@@ -12,6 +12,7 @@ from mini_agent.core.prompts import (
 )
 from mini_agent.core.trace import compact_text, redact
 from mini_agent.llm.base import LLMClient, LLMError, LLMUsage
+from mini_agent.llm.tokenizer import count_messages_tokens
 from mini_agent.sessions.store import SessionStore
 
 
@@ -38,13 +39,13 @@ class ContextManager:
         self,
         store: SessionStore,
         *,
-        max_context_chars: int = 30_000,
+        max_context_tokens: int = 12_000,
         keep_recent_messages: int = 12,
     ):
-        if max_context_chars < 1 or keep_recent_messages < 1:
+        if max_context_tokens < 1 or keep_recent_messages < 1:
             raise ValueError("context 预算和最近消息数必须大于 0。")
         self.store = store
-        self.max_context_chars = max_context_chars
+        self.max_context_tokens = max_context_tokens
         self.keep_recent_messages = keep_recent_messages
 
     def build(self, user_id: str, session_id: str) -> list[dict[str, Any]]:
@@ -69,7 +70,7 @@ class ContextManager:
             user_id, session_id, include_compressed=False
         )
         full = self._compose(session.summary, history)
-        if self.serialized_chars(full) <= self.max_context_chars:
+        if count_messages_tokens(full) <= self.max_context_tokens:
             return ContextBuildResult(
                 messages=full,
                 summary_version=session.summary_version,
@@ -99,7 +100,7 @@ class ContextManager:
         ]
         fallback_messages = self._compose(session.summary, fallback_history)
         summary_source = self._summary_source(candidate_turns)
-        max_source_chars = max(4_000, self.max_context_chars * 2)
+        max_source_chars = max(4_000, self.max_context_tokens * 2)
         if len(summary_source) > max_source_chars:
             summary_source = "[较早内容已确定性裁剪]\n" + summary_source[-max_source_chars:]
 
@@ -149,7 +150,7 @@ class ContextManager:
             messages=final_messages,
             compacted_messages=compacted,
             summary_version=final_session.summary_version if final_session else 0,
-            over_budget=self.serialized_chars(final_messages) > self.max_context_chars,
+            over_budget=count_messages_tokens(final_messages) > self.max_context_tokens,
             attempts=response.attempts,
             usage=response.usage,
         )
@@ -168,7 +169,7 @@ class ContextManager:
             fallback_used=True,
             error_code="CONTEXT_COMPACTION_FAILED",
             error_message=compact_text(message, 300),
-            over_budget=self.serialized_chars(messages) > self.max_context_chars,
+            over_budget=count_messages_tokens(messages) > self.max_context_tokens,
             attempts=attempts,
         )
 
@@ -253,8 +254,8 @@ class ContextManager:
         return "\n".join(lines)
 
     @staticmethod
-    def serialized_chars(messages: list[dict[str, Any]]) -> int:
-        return len(json.dumps(messages, ensure_ascii=False, default=str))
+    def serialized_tokens(messages: list[dict[str, Any]]) -> int:
+        return count_messages_tokens(messages)
 
     @staticmethod
     def message_to_api(message: Message) -> dict[str, Any]:

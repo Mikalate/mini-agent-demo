@@ -61,6 +61,7 @@ class RunState:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cost_usd: float = 0.0
     consecutive_errors: int = 0
     repeated_call_count: int = 0
     seen_tool_call_ids: set[str] = field(default_factory=set)

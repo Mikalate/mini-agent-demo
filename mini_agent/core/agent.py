@@ -14,7 +14,7 @@ from mini_agent.core.context import ContextManager
 from mini_agent.core.models import Message, RunState, ToolCall
 from mini_agent.core.parser import ParseIssue, ParsedAssistant, ParsedToolCall, parse_response
 from mini_agent.core.trace import RunTrace, TraceSink, compact_text, create_run_trace
-from mini_agent.llm.base import LLMClient, LLMError, LLMResponse
+from mini_agent.llm.base import LLMClient, LLMError, LLMResponse, LLMUsage
 from mini_agent.sessions.store import SessionStore
 from mini_agent.tools.base import ToolContext, ToolErrorInfo, ToolResult
 from mini_agent.tools.registry import ToolRegistry
@@ -51,7 +51,7 @@ class Agent:
         self.store = store
         self.context = context or ContextManager(
             store,
-            max_context_chars=settings.max_context_chars,
+            max_context_tokens=settings.max_context_tokens,
             keep_recent_messages=settings.keep_recent_messages,
         )
         self.trace_renderer = trace_renderer
@@ -109,9 +109,7 @@ class Agent:
             state.api_attempts += context_result.attempts
             if context_result.compacted_messages:
                 state.successful_llm_calls += 1
-                state.prompt_tokens += context_result.usage.prompt_tokens
-                state.completion_tokens += context_result.usage.completion_tokens
-                state.total_tokens += context_result.usage.total_tokens
+                self._accumulate_usage(state, context_result.usage)
                 trace.emit(
                     "context_compacted",
                     compacted_messages=context_result.compacted_messages,
@@ -131,10 +129,8 @@ class Agent:
             trace.emit(
                 "context_built",
                 message_count=len(active_messages),
-                serialized_chars=len(
-                    json.dumps(active_messages, ensure_ascii=False, default=str)
-                ),
-                max_chars=self.settings.max_context_chars,
+                serialized_tokens=self.context.serialized_tokens(active_messages),
+                max_tokens=self.settings.max_context_tokens,
                 fallback_used=context_result.fallback_used,
                 summary_version=context_result.summary_version,
             )
@@ -193,7 +189,9 @@ class Agent:
             trace.emit("llm_call_start", round=state.round)
             try:
                 response = await self.llm.complete(
-                    active_messages, self.registry.as_llm_tools()
+                    active_messages,
+                    self.registry.as_llm_tools(),
+                    max_output_tokens=self._remaining_output_budget(state),
                 )
             except LLMError as exc:
                 state.api_attempts += exc.attempts
@@ -481,17 +479,36 @@ class Agent:
             message["reasoning_content"] = decision.reasoning_content
         return message
 
-    @staticmethod
-    def _update_usage(state: RunState, response: LLMResponse) -> None:
+    def _update_usage(self, state: RunState, response: LLMResponse) -> None:
         state.api_attempts += response.attempts
         state.successful_llm_calls += 1
-        state.prompt_tokens += response.usage.prompt_tokens
-        state.completion_tokens += response.usage.completion_tokens
-        state.total_tokens += response.usage.total_tokens
+        self._accumulate_usage(state, response.usage)
+
+    def _accumulate_usage(self, state: RunState, usage: LLMUsage) -> None:
+        state.prompt_tokens += usage.prompt_tokens
+        state.completion_tokens += usage.completion_tokens
+        state.total_tokens += usage.total_tokens
+        hit = usage.prompt_cache_hit_tokens or 0
+        miss = usage.prompt_cache_miss_tokens or 0
+        if hit + miss == 0:
+            # DeepSeek 通常返回缓存命中/未命中字段；缺失时按未命中保守估算。
+            miss = usage.prompt_tokens
+        state.cost_usd += (
+            miss * self.settings.deepseek_price_input_per_1m
+            + hit * self.settings.deepseek_price_input_cache_hit_per_1m
+            + usage.completion_tokens * self.settings.deepseek_price_output_per_1m
+        ) / 1_000_000
 
     def _token_budget_reached(self, state: RunState) -> bool:
         limit = self.settings.max_total_tokens_per_turn
         return limit is not None and state.total_tokens >= limit
+
+    def _remaining_output_budget(self, state: RunState) -> int | None:
+        """Streaming hint: how many output tokens this call may still spend."""
+        limit = self.settings.max_total_tokens_per_turn
+        if limit is None:
+            return None
+        return max(1, limit - state.total_tokens)
 
     @staticmethod
     def _tool_result_signature(
@@ -602,6 +619,7 @@ class Agent:
             tokens=state.total_tokens,
             prompt_tokens=state.prompt_tokens,
             completion_tokens=state.completion_tokens,
+            cost_usd=round(state.cost_usd, 6),
             duration_ms=cls._elapsed_ms(started),
             error_code=error_code,
         )

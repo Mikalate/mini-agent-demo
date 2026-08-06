@@ -4,6 +4,8 @@ import asyncio
 import json
 from dataclasses import replace
 
+import pytest
+
 from mini_agent.core.agent import Agent
 from mini_agent.llm.base import LLMError, LLMResponse, LLMUsage
 from mini_agent.sessions.store import SessionStore
@@ -38,7 +40,7 @@ class FakeLLM:
         self.responses = list(responses)
         self.requests = []
 
-    async def complete(self, messages, tools):
+    async def complete(self, messages, tools, **kwargs):
         self.requests.append(messages)
         response = self.responses.pop(0)
         if isinstance(response, Exception):
@@ -158,7 +160,7 @@ def test_fatal_api_error_and_cancellation_have_determined_status(settings, tmp_p
     fatal_result = asyncio.run(fatal_agent.run_turn("user", "fatal", "回答"))
 
     class CancelLLM:
-        async def complete(self, messages, tools):
+        async def complete(self, messages, tools, **kwargs):
             raise asyncio.CancelledError
 
     cancel_agent, cancel_store = make_agent(
@@ -173,3 +175,54 @@ def test_fatal_api_error_and_cancellation_have_determined_status(settings, tmp_p
     assert [message.role for message in cancel_store.get_messages("user", "cancel")] == [
         "user"
     ]
+
+
+def _final(usage: LLMUsage | None = None) -> LLMResponse:
+    return LLMResponse(
+        "id",
+        "fake",
+        {"role": "assistant", "content": "完成"},
+        "stop",
+        usage or LLMUsage(),
+    )
+
+
+def test_cost_estimate_uses_input_output_and_cache_hit_prices(
+    settings, tmp_path
+) -> None:
+    usage = LLMUsage(
+        prompt_tokens=1_100_000,
+        completion_tokens=200_000,
+        total_tokens=1_300_000,
+        prompt_cache_hit_tokens=100_000,
+        prompt_cache_miss_tokens=1_000_000,
+    )
+    agent, _ = make_agent(settings, tmp_path, FakeLLM([_final(usage)]))
+
+    result = asyncio.run(agent.run_turn("user", "cost", "回答"))
+
+    assert result.status == "completed"
+    assert result.state.prompt_tokens == 1_100_000
+    assert result.state.completion_tokens == 200_000
+    assert result.state.cost_usd == pytest.approx(
+        (1_000_000 * 0.27 + 100_000 * 0.07 + 200_000 * 1.10) / 1_000_000
+    )
+
+
+def test_cost_falls_back_to_miss_price_when_cache_fields_missing(
+    settings, tmp_path
+) -> None:
+    usage = LLMUsage(prompt_tokens=1_000_000, total_tokens=1_000_000)
+    agent, _ = make_agent(settings, tmp_path, FakeLLM([_final(usage)]))
+
+    result = asyncio.run(agent.run_turn("user", "costfb", "回答"))
+
+    assert result.state.cost_usd == pytest.approx(0.27)
+
+
+def test_cost_is_zero_without_usage(settings, tmp_path) -> None:
+    agent, _ = make_agent(settings, tmp_path, FakeLLM([_final()]))
+
+    result = asyncio.run(agent.run_turn("user", "cost0", "回答"))
+
+    assert result.state.cost_usd == 0.0

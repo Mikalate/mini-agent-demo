@@ -169,10 +169,10 @@ async def main() -> int:
         "根据当前 session 历史简短回答：刚才为什么建议带伞？",
     )
 
-    section("6. Context 压缩", "演示配置临时降低字符阈值；默认仍为 30000。")
+    section("6. Context 压缩", "演示配置临时降低 token 阈值；默认仍为 12000。")
     compact_settings = replace(
         settings,
-        max_context_chars=1_600,
+        max_context_tokens=700,
         keep_recent_messages=4,
     )
     compact_agent = build_agent(compact_settings, reopened_store)
