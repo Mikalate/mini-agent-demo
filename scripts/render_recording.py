@@ -136,7 +136,7 @@ def public_message_lines(session_id: str, messages: list[Any]) -> list[tuple[str
             output.append(
                 (
                     "success" if ok else "error",
-                    f"  结果：{'✓' if ok else '✗'} {tool} {compact_text(redact(fact), 170)}",
+                    f"  结果：{'ok' if ok else 'err'} {tool} {compact_text(redact(fact), 170)}",
                     1.1,
                 )
             )
@@ -166,6 +166,7 @@ def build_timeline(store: SessionStore, data_dir: Path) -> list[tuple[str, str, 
         ("search", "query*, top_k"),
         ("todo", "action*, text, todo_id"),
         ("weather", "city*, date"),
+        ("read_docs", "doc_id*, max_chars"),
     ):
         timeline.append(("tool", f"/tools  {name}({args})", 0.8))
 
@@ -192,7 +193,7 @@ def build_timeline(store: SessionStore, data_dir: Path) -> list[tuple[str, str, 
         timeline.extend(public_message_lines("window_1", window_1[4]))
     timeline.append(("success", "SessionStore 与 Agent 已重新创建，历史仍可召回。", 1.8))
 
-    section("6", "Context 压缩（演示阈值 1600，默认 30000）")
+    section("6", "Context 压缩（演示阈值 800 token，默认 12000）")
     session = store.get_session("demo_user", "compression_demo")
     compressed = [
         message
@@ -214,7 +215,34 @@ def build_timeline(store: SessionStore, data_dir: Path) -> list[tuple[str, str, 
     if compression_runs:
         timeline.extend(public_message_lines("compression_demo", compression_runs[-1]))
 
-    section("7", "Trace 与测试")
+    section("7", "read_docs 与 search 精排")
+    if len(window_1) > 6:
+        for run in window_1[5:7]:
+            timeline.extend(public_message_lines("window_1", run))
+    timeline.append(
+        ("success", "search 粗召回后轻量精排，结果稳定；read_docs 读取白名单文档。", 1.8)
+    )
+
+    section("8", "自进化经验")
+    if len(window_1) > 7:
+        timeline.extend(public_message_lines("window_1", window_1[7]))
+    # 错题集（error）优先，正确经验（lesson）随后，两类同屏展示。
+    records = store.list_experiences(limit=50)
+    errors = [record for record in records if record.kind == "error"][:3]
+    lessons = [record for record in records if record.kind == "lesson"][:3]
+    for record in errors + lessons:
+        timeline.append(
+            (
+                "error" if record.kind == "error" else "info",
+                f"经验[{record.kind}] {record.trigger}：{compact_text(redact(record.content), 150)}",
+                1.0,
+            )
+        )
+    timeline.append(
+        ("success", "错误与成功路径自动沉淀，跨 session 按错误码/工具序列触发召回。", 1.8)
+    )
+
+    section("9", "Trace 与测试")
     weather_run_id = window_1[2][0].run_id if len(window_1) > 2 else ""
     events = trace_events(data_dir, weather_run_id or "")
     timeline.append(("dim", f"Trace：.agent_data/recording_demo/runs/{weather_run_id}/trace.jsonl", 1.4))
@@ -232,8 +260,10 @@ def build_timeline(store: SessionStore, data_dir: Path) -> list[tuple[str, str, 
             timeline.append(("dim", f"{name}  {compact_text(redact(event), 170)}", 0.9))
     timeline.append(("command", '> python -m pytest -m "not live"', 1.2))
     timeline.append(("success", "...................................  [100%]", 1.1))
-    timeline.append(("success", "35 passed, 4 deselected in 4.00s", 2.3))
-    timeline.append(("section", "演示完成：真实 LLM、工具、Session、Context、Trace 与测试均已验证", 4.0))
+    timeline.append(("success", "62 passed, 5 deselected", 2.3))
+    timeline.append(
+        ("section", "演示完成：真实 LLM、五个工具、Session、Context、read_docs、自进化、Trace 与测试均已验证", 4.0)
+    )
     return timeline
 
 

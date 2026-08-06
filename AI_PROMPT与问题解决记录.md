@@ -430,13 +430,13 @@
 
 ### 13.1 费用估算（已知限制 3-B）
 
-### AI Prompt
+#### AI Prompt
 
 ~~~text
 用户决定在已有提交基础上继续增强：按 3B → 3A → 4 的固定顺序处理 README“已知限制”中的第 3、4 条。本次只做 3-B“费用估算”：基于 API 返回的 usage 与可配置单价，为每次 run 计算估算费用，并写入 run_end Trace 与终端输出；不得改动 Agent Loop 的决策逻辑，不得引入第三方计费依赖；默认单价必须是可覆盖的估算值，并明确标注；同步更新 .env.example、README 与离线测试。
 ~~~
 
-### 成果
+#### 成果
 
 - 状态：已完成。
 - `Settings` 新增三个可配置单价：`DEEPSEEK_PRICE_PER_1M_INPUT`（默认 0.27）、`DEEPSEEK_PRICE_PER_1M_INPUT_CACHE_HIT`（默认 0.07）、`DEEPSEEK_PRICE_PER_1M_OUTPUT`（默认 1.10），单位均为美元/百万 token，标注为估算值。
@@ -445,7 +445,7 @@
 - `.env.example` 配置表、README 配置表与已知限制第 3 条同步更新。
 - 新增 3 项离线测试（三价累计、缓存字段缺失回退、零 usage 零费用）；全部 38 项离线测试通过。
 
-### 问题解决记录
+#### 问题解决记录
 
 - 问题：已知限制第 3 条实际包含两个独立子问题——“Context 用字符预算近似 token”和“没有精确费用估算”，且用户询问“改成流式请求是否就能顺便解决”。
 - 观察证据：非流式响应自带精确 usage，费用估算只缺单价表与累计逻辑；字符→token 近似发生在请求发出前的上下文构建阶段；流式只影响响应侧传输，对这两者均无帮助。
@@ -455,13 +455,13 @@
 
 ### 13.2 上下文 token 精确估算（已知限制 3-A）
 
-### AI Prompt
+#### AI Prompt
 
 ~~~text
 继续 3B 之后的第 3-A 项：把 ContextManager 的上下文压缩判据从“字符预算近似”替换为“token 预算精确估算”。用户已选定方案 B：下载 DeepSeek 官方 HF tokenizer 的 tokenizer.json，打包进仓库，用 tokenizers 库离线加载（不得在运行时联网下载）。要求：新增可复用的 token 计数模块与打包文件；配置项从 MAX_CONTEXT_CHARS 升级为 MAX_CONTEXT_TOKENS（默认 12000）；同步更新 Agent、CLI、demo 脚本、pyproject 打包配置、.env.example、README 与全部相关测试；保持离线测试全部离线通过。若模型词表与打包文件不一致，如实记录为剩余风险，不得声称完全精确。
 ~~~
 
-### 成果
+#### 成果
 
 - 状态：已完成。
 - 新增 `mini_agent/llm/tokenizer.py`：线程安全的懒加载单例，`Tokenizer.from_file` 离线加载打包词表；提供 `count_tokens` 与 `count_messages_tokens`（对将发送的 JSON 序列化文本计数）。
@@ -471,7 +471,7 @@
 - `pyproject.toml` 新增 `tokenizers==0.22.2` 依赖与 `mini_agent.llm = ["tokenizer/*.json"]` 打包配置；`.env.example`、README、`scripts/demo_recording.py` 同步更新。
 - 新增 4 项 tokenizer 离线测试；全部 42 项离线测试通过。
 
-### 问题解决记录
+#### 问题解决记录
 
 - 问题：选官方 HF tokenizer 会引入网络下载依赖，与项目“默认测试完全离线”的验收口径冲突；用户先质疑“调用 API 不总归需要网络吗”。
 - 观察证据：项目离线指的是测试、非 API 命令与可复现性；HF 直连超时（curl exit 28），hf-mirror 可用但连接不稳定，wget 断点续传最终完整下载 7.5 MB；本地已装 `tokenizers 0.22.2`。
@@ -481,13 +481,13 @@
 
 ### 13.3 流式请求与实时 token 预算断流（已知限制 4）
 
-### AI Prompt
+#### AI Prompt
 
 ~~~text
 继续 3A 之后的第 4 项：把 DeepSeek 适配器从非流式请求改为流式请求，使 Agent 能在接收过程中实时判断并提前终止超预算输出，解决“只能在 API 返回 usage 后判断 token 硬预算”的限制。要求：先对真实 DeepSeek API 验证流式行为（include_usage、reasoning_content、tool_calls delta、finish_reason 与 usage 的出现位置），再实现；保持 LLMResponse 返回结构与 Agent Loop 决策逻辑不变；流式累积的 content/reasoning_content/tool_calls 必须与现有非流式路径语义一致，reasoning_content 仍能跨轮回传；实时预算用打包 tokenizer 对 delta 计数，达到剩余预算时提前断流并复用现有 MAX_TOTAL_TOKENS_REACHED 终止语义；同步更新 Protocol、所有测试替身与适配器单测，保持离线测试全部通过。
 ~~~
 
-### 成果
+#### 成果
 
 - 状态：已完成。
 - 真实 API 验证结论：`stream_options={"include_usage": True}` 被 DeepSeek 接受；`usage` 与 `finish_reason` 只在最后一个 chunk 返回；`reasoning_content`、`content`、`tool_calls` 均按 delta 分片传输（tool_calls 按 index 合并 id/name/arguments）；`reasoning_effort` 合法值为 none/minimal/low/medium/high/xhigh/max（无 min）。
@@ -497,10 +497,164 @@
 - 43 项离线测试与 4 项真实 live smoke test 全部通过（含 calculator 多轮、reasoning_content 轮回传、weather→todo、session 恢复）。
 - 官方文档核对（https://api-docs.deepseek.com/zh-cn/guides/thinking_mode）：`thinking` 参数经 `extra_body` 传入、流式下 `reasoning_content` 经 delta 分片累积、携带 tools 的请求必须完整回传 `reasoning_content`（否则 400）、无工具调用轮次的 `reasoning_content` 会被忽略、思考模式不支持 temperature/top_p 等——全部与项目实现一致；官方流式示例未提 `include_usage`，但真实 API 验证确认可用。
 
-### 问题解决记录
+#### 问题解决记录
 
 - 问题：非流式请求必须等完整响应返回后才能根据 usage 判断 token 硬预算，超预算也无法中途停止。
 - 观察证据：流式验证显示 usage 与 finish_reason 只在最后一个 chunk；工具调用参数按 index 分片渐进到达；流式累积的 delta 文本并非 token 边界对齐。
 - 尝试方案：逐字渲染（终端改动面大、风险高）与后台流式（保持响应结构、Agent Loop 零决策改动）；实时计数用打包 tokenizer 对每个 delta 编码（跨 chunk 边界会偏大）或用整段重编码。
 - 最终选择：后台流式累积，保持 LLMResponse 结构与 Parser/Agent 不变；实时预算用 delta 逐段 tokenizer 计数，达到剩余预算即断流并复用现有 LLMError → MAX_TOTAL_TOKENS_REACHED 终止路径；偏大的计数方向是更早断流，属于保守方向。
 - 结果/剩余风险：43 项离线与 4 项 live 测试全部通过；delta 计数跨 chunk 边界可能略高估，导致断流略早于精确预算；尚未实现逐字渲染；断流时拿不到精确 usage（仅近似累计），README 已如实记录。
+
+### 13.4 read_docs 工具（README 已知限制项）
+
+#### AI Prompt
+
+~~~text
+用户要求在既有提交基础上补齐 README 已知限制中的 read_docs 工具，并明确两点：文档内容来源采用方案 A1（白名单读取仓库真实 md：README.md、PROMPTS.md、PROBLEM_SOLVING.md）；同时支持 txt（编码兜底），并新增第 5 项 live smoke test。要求：注册表白名单按 id 查表、不接受任意路径并做 resolve 防穿越校验；默认截断返回（max_chars 默认 3000、上限 8000）；未知 doc_id 返回结构化错误并列出可用列表；返回标注 mock=true；Agent Loop 零改动；同步更新 pyproject package-data、README、记录文件与测试。
+~~~
+
+#### 成果
+
+- 状态：已完成。
+- 新增 `data/docs_index.json` 白名单：readme / prompts / problem-solving（仓库真实 md）+ demo-notes（`data/demo_notes.txt`，用于展示 txt 支持）。
+- 新增 `mini_agent/tools/read_docs.py`：`read_docs(doc_id, max_chars?)`；按白名单查表取路径，`Path.resolve()` 校验在项目根内；md/txt 纯文本读取（UTF-8 优先，GBK 兜底）；内容截断并返回 `{doc_id, title, content, chars, truncated, format, mock}`；未知 id 抛 `DOC_NOT_FOUND`（retryable 且带可用列表），读失败抛 `DOC_READ_FAILED`，非 md/txt 抛 `DOC_FORMAT_UNSUPPORTED`。
+- `build_default_registry()` 注册 read_docs；pyproject `package-data` 增加 `data/*.txt`。
+- 新增 6 项离线测试（成功读 md、txt、未知 id 列表、截断、路径注入拦截、缺参数 schema 失败），并更新注册表导出集合断言；新增 live 第 5 项（真实模型调用 read_docs 总结 README）。
+- 49 项离线测试与 5 项 live smoke test 全部通过；README 工具表与已知限制同步更新。
+
+#### 问题解决记录
+
+- 问题：read_docs 的文档来源与格式支持范围如何界定，以及如何保证只读、不越权。
+- 观察证据：README 已知限制仅一句“read_docs 工具未实现”；笔试题允许 read_docs 自定义；仓库真实 md 内容有说服力但 wheel 打包后不在包内；docx 本质是 zip+XML，需要额外解析层。
+- 尝试方案：来源三选一（读仓库 md / 独立演示文档 / 混合）；格式三档（md-only / md+txt / 加 docx）。用户选定 A1 + md/txt。
+- 最终选择：白名单按 id 查表天然拒绝任意路径，`resolve().is_relative_to(root)` 作为纵深防御；txt 复用纯文本读取并做编码兜底；docx 暂不支持并如实记录。
+- 结果/剩余风险：49 项离线与 5 项 live 全部通过；wheel 打包后 `PROMPTS.md`、`PROBLEM_SOLVING.md` 不在包内（README 已知限制已记录）；docx/老式 doc 未支持；`docs_index.json` 为仓库内可被提交修改的文件，路径被篡改时由 resolve 校验兜底。
+
+### 13.5 中断恢复提示与 search/weather 演示引导
+
+#### AI Prompt
+
+~~~text
+用户基于对已知限制的问答，要求做两处小改进：1）中断（interrupted）回复中加入“可输入‘继续’或重述目标来恢复任务”的提示文案；2）search 在空结果时返回预设语料的推荐关键词（suggested），weather 在未知城市/日期错误中加入可用城市/日期列表，方便演示时快速找到可用的查询词，避免乱输搜不到。要求：改动保持最小，只影响返回结构与提示文案，不改变工具 Schema 与 Agent Loop 决策；更新相应测试断言与 README 工具表说明；全部离线测试保持通过。
+~~~
+
+#### 成果
+
+- 状态：已完成。
+- `Agent._finish_interrupted` 的中断回复追加“可输入‘继续’或重述目标来恢复任务”，引导用户恢复而非自动重放。
+- `search` 空结果时返回 `suggested` 字段（从 `search_corpus.json` 提取全部 keywords 去重），模型可据此换词重试。
+- `weather` 未知城市错误消息列出可用城市（上海、北京、深圳）；未知日期错误列出该城市可用日期并提示“不传 date 使用默认值”。
+- 增强现有测试断言：空搜索 `suggested` 非空、未知城市错误含“上海”、中断回复含“继续”；README 工具表补充说明。
+- 49 项离线测试全部通过；live 测试不受影响（未改动 Schema）。
+
+#### 问题解决记录
+
+- 问题：中断后用户不知道如何恢复；演示时乱输关键词容易搜不到、查不到天气。
+- 观察证据：中断回复原本只说“数据已保留，可以继续”，没有恢复引导；search 空结果返回空数组，weather 未知城市只有“没有 xx 的天气”，模型只能盲目重试。
+- 尝试方案：a) 仅改文案/返回字段（最小改动）；b) 自动重放幂等工具（成本高，超出本次范围，已在上轮问答中否决）。
+- 最终选择：在返回层加引导信息——中断文案提示“继续”，search 空结果带推荐关键词，weather 错误带可用城市/日期；不改 Schema 与 Agent Loop。
+- 结果/剩余风险：49 项离线测试通过；suggested 列表随语料 keywords 变化，若语料扩展需重新确认推荐词覆盖；weather 可用日期是硬编码排除 default 后的排序，多日期时列表自动扩展。
+
+### 13.6 自进化 Loop、search 精排与 loop 改进（JD 加分项）
+
+#### AI Prompt
+
+~~~text
+用户根据岗位 JD 加分项“agent 自进化 loop：错题集 / 正确经验管理与调用、种子集合生成、Agent 设计”，在光辰笔试.md 末尾写入第 20 节实施计划，并确认按计划执行、全部完成后等待指令。要求：新增 experiences 表与 ExperienceManager（读侧触发注入、写侧自动提炼、三层种子：人工 seeds + Trace 挖掘脚本 + 运行时沉淀）；search 加轻量 rerank（粗召回 recall_k + 可替换精排 + 返回摘要化，保扩展性）；loop 小改进（仅 tool_step==0 且 retryable 时 run 级自动重试一次、滚动摘要质量校验告警）；Agent Loop 决策核心零改动；保持离线测试原则；全部完成后等待指令统一提交。
+~~~
+
+#### 成果
+
+- 状态：已完成（等待统一提交指令）。
+- `experiences` 表：`kind('error'|'lesson')/trigger/content/source_run_id/hit_count`，`(kind, trigger)` 唯一，upsert 合并；Store 新增 `upsert_experience/get_experiences/list_experiences/increment_experience_hit/count_experiences/latest_run_error/recent_tool_names`。
+- `ExperienceManager`（core/experience.py）：构造时幂等加载 5 条人工种子；`read()` 按最近错误码（`err:<code>`）与工具序列（`seq:<tool1>→<tool2>`）触发召回并递增 hit_count；`write()` 在 run 结束后自动提炼（completed→lesson、incomplete→error），模型不参与写入。
+- Agent 集成：`run_turn` 包装 `_run_turn_core` 并在结束时沉淀经验（best-effort，失败不影响结果）；`context.prepare` 注入命中的低优先级 system 经验段；run 级自动重试一次（仅 `round==1 && tool_step==0 && retryable`，防副作用）；摘要质量告警 `context_summary_quality` Trace 事件。
+- search rerank：粗召回（现有加权打分取 `recall_k=max(10, top_k*3)`）→ `_rerank` 轻量精排（覆盖率/title/关键词权重，接口可替换）→ 摘要化返回（去 score、snippet ≤160）。
+- `scripts/extract_experiences.py`：离线扫描 `.agent_data/runs/*/trace.jsonl`，按 `tool_call_end.error_code` 与 `run_end.error_code` 挖掘错误种子（去重、排除 INTERRUPTED）。
+- 新增 13 项离线测试（经验 CRUD/种子/读侧召回/写侧提炼/Agent 注入/Trace 挖掘/重试 3 项/摘要校验 2 项/rerank 稳定性）；62 项离线 + 5 项 live 全部通过。
+
+#### 问题解决记录
+
+- 问题：现有 Agent 每轮“无记忆重来”——错误只当场自纠、Trace 从不召回、无种子经验；search 单层打分无精排扩展性；incomplete 瞬时错误直接结束；滚动摘要无质量校验。
+- 观察证据：README Memory 表只有 session 内记忆；live 测试确认错误可自纠但不沉淀；语料仅 4 篇时 top_k≈全量返回。
+- 尝试方案：rerank 轻量精排（无依赖、可替换接口）与不做（用户要求做，保扩展性）；run 级重试限定“首次调用且无副作用”以避免重复 todo 等副作用；摘要校验用高频词保留率（阈值 0.4）告警而非阻断。
+- 最终选择：触发式注入 + 自动沉淀 + 三层种子；精排接口独立于粗召回可替换；重试仅在 `tool_step==0` 时触发一次；摘要告警只进 Trace 不改变控制流。
+- 结果/剩余风险：62 项离线与 5 项 live 全部通过；经验 trigger 目前仅精确匹配（错误码/工具序列），意图相似度检索是后续增强；`hit_count` 在每次 prepare 递增（含未命中后重试的 run，语义上可接受）；运行时沉淀 upsert 会覆盖同 trigger 的种子内容，种子仅作为初始先例；全部改动待用户确认后统一提交。
+
+### 13.7 录屏脚本更新与全功能测试
+
+#### AI Prompt
+
+~~~text
+用户要求：1）在 AI_PROMPT与问题解决记录.md 记录本次工作（已由 13.1-13.6 覆盖）；2）检查光辰笔试.md“### 18. 终端录屏脚本”是否需要修改并更新；3）评估是否有必要做一次全功能测试。结论：录屏脚本需同步新功能（五个工具、read_docs、自进化、rerank、MAX_CONTEXT_TOKENS、测试数量），且有必要做全功能测试。执行：更新光辰笔试.md 第 18 章、scripts/demo_recording.py、RECORDING.md，然后以真实 API 跑通完整演示并修复发现的问题。
+~~~
+
+#### 成果
+
+- 状态：已完成（等待统一提交指令）。
+- 修复实现与设计不一致：`latest_run_error` / `recent_tool_names` 增加可选 `session_id`（不传时为 user 级），`ExperienceManager.read` 改为按 user 全局召回——“用户 A 的教训用户 B 受益”真正生效（此前是 session 级，跨 session 不命中）。
+- 更新录屏脚本：`scripts/demo_recording.py` 新增 section 7（read_docs + search 精排）、section 8（自进化经验：错误引导 + 经验库表格 + 机制说明），section 1 改为五个工具，原 Trace 测试改为 section 9，最终面板文案同步。
+- 同步文档：光辰笔试.md 第 18 章（五个工具、`MAX_CONTEXT_TOKENS`、新增 7/8 步、测试数量 62）；RECORDING.md 步骤列表扩展为 9 步并说明需重录。
+- 修复光辰笔试.md 章节编号冲突：此前追加的“自进化”计划误用 `### 18.`（与原文第 18 章终端录屏脚本、第 19 章检查清单冲突），已改为 `### 20.`（子节 20.x），并同步修正记录文件 13.6 中的引用。
+- 修复 Windows 控制台编码崩溃：`trace.py` 与 `render_recording.py` 中的 Unicode ✓/✗ 改为 ASCII `ok/err`（GBK 控制台下 rich 渲染 Unicode 对勾会抛 UnicodeEncodeError）。
+- 全功能测试通过：以真实 DeepSeek API 跑通 demo_recording.py 全部 9 段（工具注册、calculator、直接回答、weather→todo、session 隔离、恢复、压缩、read_docs+search、自进化、Trace + 62 passed / 5 deselected），费用显示（cost）与 token 预算均正常；离线测试 62 项保持通过。
+
+#### 问题解决记录
+
+- 问题一：经验召回设计为“全局共享”，但实现按 session 查询，跨 session 不会命中。
+- 观察证据：`ExperienceManager.read` 用 `latest_run_error(user_id, session_id)` 与 `recent_tool_names(user_id, session_id)`，window_1 的失败在 window_2 不可见；全功能演示脚本设计依赖跨 session 效果。
+- 尝试方案：a) 保留 session 级并降级文档表述；b) 改为 user 级（store 方法 session_id 可选，read 传 None）。
+- 最终选择：方案 b，全局召回与“错题集/正确经验”定位一致；测试不受影响（read 测试本就期望命中）。
+- 问题二：全功能测试在 Windows GBK 控制台崩溃（`UnicodeEncodeError: '\u2713'`）。
+- 观察证据：rich 的 legacy windows renderer 在非 UTF-8 终端无法编码 ✓；Windows Terminal 下不崩，git-bash 管道崩。
+- 尝试方案：a) 运行前设 `PYTHONIOENCODING=utf-8`（能跑通但治标）；b) 渲染改用 ASCII `ok/err`。
+- 最终选择：方案 b（同时改 trace.py 与 render_recording.py），任意控制台均安全。
+- 问题三：光辰笔试.md 章节编号冲突（追加计划误用 18）。
+- 最终选择：改为 `### 20.`，同步修正记录文件 13.6 引用；确认第 18 章（录屏）与第 19 章（检查清单）为原文既有章节。
+- 结果/剩余风险：全功能演示 9 段全部跑通，62 项离线保持通过；旧版录屏（35 项时代）需按 RECORDING.md 9 步重录；`MAX_CONTEXT_TOKENS` 等新配置名已在录屏脚本与文档中同步。
+
+### 13.8 录屏检查与 Context 压缩演示修复
+
+#### AI Prompt
+
+~~~text
+录屏视频已生成，用户用 OCR 识别 11 个关键帧（内容在 Mini_Agent_Terminal_Demo.md）并请我检查。检查发现：Section 6 Context 压缩演示失败——压缩后追问返回 MAX_CONTEXT_REACHED（0 轮调用），且经验库残留上一轮失败沉淀的 err:MAX_CONTEXT_REACHED。要求：定位根因（演示阈值选择），离线验证“轮次 × 阈值 × 演示文本长度”组合，修复后重跑真实演示并重新生成视频，全部检查通过后请用户重新目检。
+~~~
+
+#### 成果
+
+- 状态：已完成（等待用户对新视频关键帧的最终目检）。
+- 根因：`demo_recording.py` 压缩演示阈值 700 token 过小——压缩后上下文（真实摘要 + 最近 4 条消息 + system）实测 781 token 仍超预算，导致第 3 次确认起每个 run 直接 MAX_CONTEXT_REACHED 终止；且失败回答自身又占约 210 token 进入 context，形成恶性循环。
+- 修复：演示文本 `*12` 减为 `*6`；新增 `SessionStore.clear_experiences()`，`demo_recording.py` 开头清空经验库（录屏从 5 条种子开始，不残留旧数据）；用临时离线脚本验证四组“文本长度 × 阈值 × 轮次”组合，确定 **演示文本×6 + 阈值 800 + 6 次确认**：第 6 次确认触发压缩 6 条、全程无超预算、追问上下文 638 token（< 800）。
+- 重新运行真实演示：压缩标记 8、摘要版本 2（压缩发生两次）、最后追问回答“项目代号：晨星；未解决事项：补充录屏说明”，无 MAX_CONTEXT_REACHED。
+- 重新生成视频（126.1s，H.264/1600×900/15fps）：无黑帧；timeline 验证 8 项全部通过（压缩触发、摘要 v2、无 MAX_CONTEXT_REACHED、追问成功、read_docs、自进化、62 passed、经验记录）；11 张关键帧已更新到 `.agent_data/frames_check/`。
+- 遇到 DeepSeek API `HTTP 402 Insufficient Balance`：属账户余额不足，不影响本地操作；真实演示/录屏重跑需充值后继续。
+
+#### 问题解决记录
+
+- 问题：录屏中 Context 压缩演示的“压缩后追问”失败，Agent 答不出“项目代号/未解决事项”。
+- 观察证据：OCR 识别显示第 135 行追问返回 MAX_CONTEXT_REACHED；实测压缩后上下文 781 token 超过 700 阈值；压缩标记存在（压缩本身成功，是压缩后仍超预算）。
+- 尝试方案：阈值 700→1200（不触发压缩）→600（触发但压缩后仍超）→离线模拟四组组合确定 800+×6+6 轮。
+- 最终选择：降低演示文本体积（×12→×6）+ 阈值 800 + 确认轮次 4→6，压缩后余量约 160 token；演示脚本重置经验库保证录屏可复现。
+- 结果/剩余风险：压缩触发（8 条、摘要 v2）、追问成功、无 MAX_CONTEXT_REACHED；视频检查全部通过；剩余风险为真实模型摘要长度波动（本轮摘要较短，若未来摘要显著变长需复核阈值）；DeepSeek 账户余额不足时真实演示/录屏重跑会失败。
+
+### 13.9 录屏经验库展示优化（错题集与正确经验同屏）
+
+#### AI Prompt
+
+~~~text
+v2 录屏 OCR 检查通过后，用户指出一个小瑕疵：Section 8 自进化经验库只展示 limit=5 的最新条目（全是 lesson 成功路径），种子错题集（err:WEATHER_NO_DATA 等）未上画面，与 JD 加分项“错题集”重点不符。要求优化展示：让错题集（error）与正确经验（lesson）同屏可见。
+~~~
+
+#### 成果
+
+- 状态：已完成（等待用户对新视频关键帧的最终目检）。
+- `render_recording.py` section 8 改为分组展示：`list_experiences(limit=50)` 后按 kind 过滤，error 取前 3（错题集，红色样式）排在 lesson 前 3（正确经验，info 样式）之前，两类同屏。
+- 重新生成视频（127.1s，H.264/1600×900/15fps）；timeline 验证：经验条目 6 条 = 3 error（NO_PROGRESS / DOC_NOT_FOUND / WEATHER_NO_DATA）+ 3 lesson（工具序列成功路径）；11 张关键帧已更新到 `.agent_data/frames_check/`。
+
+#### 问题解决记录
+
+- 问题：经验库展示被“按 updated_at 取最新 5 条”挤掉种子错题集，录屏只见正确经验不见错题。
+- 观察证据：v2 OCR 中经验沉淀 5 条全为 lesson；实际库含 5 种子（3 error + 2 lesson）+ 5 运行时 lesson。
+- 尝试方案：a) 单纯加大 limit（仍按时间排序，错题集可能被挤掉）；b) 按 kind 分组，error 优先 + lesson 各取 3 条（最终选择）。
+- 结果/剩余风险：错题集与正确经验同屏，红/灰样式区分；画面行数控制为 6 条经验，不挤占其他 section；无剩余风险，等待最终目检。

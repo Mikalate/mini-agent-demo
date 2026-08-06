@@ -10,6 +10,6 @@ APIkey.txt
 *.db-shm
 *.db-wal
 trace.jsonl
-artifacts/*.mp4
+# 演示 mp4 是提交产物；mkv 备用格式体积更大，仍忽略
 artifacts/*.mkv
 

@@ -55,12 +55,33 @@
 
 - 问题：全部调用真实 API 会受到费用、网络和模型措辞随机性影响；只用 FakeLLM 又不能证明真实模型会自主选择工具。
 - 证据：控制流适合精确脚本化断言，真实模型更适合断言结构、工具名和关键事实。
-- 选择：35 项默认测试完全离线，覆盖所有协议和异常分支；4 项 `live` smoke tests 单独运行，只断言关键行为与持久化结果。
-- 结果：检查节点 2 中离线 35 项和真实 4 项均通过，默认测试约 4 秒可重复完成。
+- 选择：62 项默认测试完全离线，覆盖所有协议、异常分支、费用/token 估算、流式、read_docs、自进化与 rerank；5 项 `live` smoke tests 单独运行，只断言关键行为与持久化结果。
+- 结果：当前离线 62 项和真实 5 项均通过，默认测试数秒内可重复完成。
 
 ## 9. 本地密钥的验收使用
 
 - 问题：用户提供了本地 `APIkey.txt`，真实测试需要使用，但代码、Trace、SQLite 和输出都不能保存它。
 - 证据：应用正式配置只读取 `.env`/进程环境；测试 marker 只在进程环境存在 key 时启用。
 - 选择：把 `APIkey.txt` 加入 `.gitignore`，验收命令只在单次测试进程中临时设置环境变量，并在 finally 中清除；提交前按命中数量扫描，不打印密钥。
-- 结果：四项 live 测试通过，密钥在该文件之外的工作区文本中命中 0 项。
+- 结果：live 测试通过，密钥在该文件之外的工作区文本中命中 0 项。
+
+## 10. 流式 usage 与 finish_reason 只在流末尾
+
+- 问题：非流式请求必须等完整响应返回才能判断 token 硬预算；改为流式后，usage 与 finish_reason 的出现位置决定实时断流是否可行。
+- 证据：真实 API 验证显示 `stream_options={"include_usage": True}` 被接受，但 `usage` 与 `finish_reason` 只在最后一个 chunk 返回；`reasoning_content`/`content`/`tool_calls` 均按 delta 分片到达且非 token 边界对齐。
+- 选择：后台流式累积，保持 LLMResponse 结构与 Agent Loop 不变；实时预算用打包 tokenizer 对每个 delta 编码累计，达到剩余预算即断流并复用 `MAX_TOTAL_TOKENS_REACHED` 终止语义；delta 跨边界计数偏大，方向是更早断流（保守）。
+- 结果：43→62 项离线与 5 项 live 通过；断流时无精确 usage，README 已记录。
+
+## 11. token 精确估算必须离线打包词表
+
+- 问题：Context 压缩阈值用字符数近似 token 不精确；官方 tokenizer 从 HuggingFace 分发，直接在线加载会破坏“默认测试完全离线”的验收口径。
+- 证据：HF 直连超时、镜像站不稳定；`tokenizers` 库已装且支持 `Tokenizer.from_file` 离线加载。
+- 选择：把官方 BPE `tokenizer.json`（约 7.5 MB）打包进 `mini_agent/llm/tokenizer/`，懒加载单例离线计数；配置项从 `MAX_CONTEXT_CHARS` 升级为 `MAX_CONTEXT_TOKENS`。
+- 结果：62 项离线测试通过；词表来自 `deepseek-ai/DeepSeek-V3`，若模型词表不同需替换；估算未计入 tools Schema 与 system 模板差异。
+
+## 12. 自进化经验：全局召回与低优先级注入
+
+- 问题：Agent 每轮“无记忆重来”，错误只当场自纠、Trace 从不召回；经验库若做成 session 级则跨 session 无效，若全量注入则挤占 context 且可能被误读为指令。
+- 证据：设计目标为“用户 A 的教训用户 B 受益”；`latest_run_error`/`recent_tool_names` 按 session 查询时跨 session 不命中。
+- 选择：经验表按 `(kind, trigger)` 唯一 upsert；召回改为 user 级（store 方法 session_id 可选），按“最近错误码/工具序列”精确匹配；注入为标注低优先级的 system 段；模型不参与写入，防止幻觉沉淀。
+- 结果：62 项离线与 5 项 live 通过，全功能演示确认经验库展示与跨 session 机制说明；trigger 精确匹配，意图相似度检索留作后续。
