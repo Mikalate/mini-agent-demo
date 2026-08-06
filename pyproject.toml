@@ -27,7 +27,7 @@ include = ["mini_agent*", "data*"]
 [tool.setuptools.package-data]
 "mini_agent.sessions" = ["schema.sql"]
 "mini_agent.llm" = ["tokenizer/*.json"]
-"data" = ["*.json"]
+"data" = ["*.json", "*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

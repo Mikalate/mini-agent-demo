@@ -120,6 +120,7 @@ def test_registry_exports_schemas_and_rejects_bad_registration(tmp_path: Path) -
         "search",
         "todo",
         "weather",
+        "read_docs",
     }
     assert all(item["function"]["parameters"]["type"] == "object" for item in exported)
 
@@ -183,9 +184,35 @@ def test_calculator_arithmetic_limits_and_data_tool_edge_cases(tmp_path: Path) -
     )
     assert not huge_power.ok
     assert empty_search.ok and empty_search.data["results"] == []
+    assert empty_search.data["suggested"]  # 空结果时给出推荐关键词
     assert not unknown_weather.ok
     assert unknown_weather.error is not None
     assert unknown_weather.error.code == "WEATHER_NO_DATA"
+    assert "上海" in unknown_weather.error.message  # 未知城市时给出可用城市列表
+
+
+def test_search_rerank_is_stable_and_compact(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "agent.db")
+    registry = build_default_registry()
+    context = ToolContext("user", "session", store)
+
+    first = invoke(
+        registry,
+        ToolCall("s1", "search", {"query": "context compression", "top_k": 3}),
+        context,
+    )
+    second = invoke(
+        registry,
+        ToolCall("s2", "search", {"query": "context compression", "top_k": 3}),
+        context,
+    )
+
+    assert first.ok and first.data["results"]
+    assert "score" not in first.data["results"][0]  # 摘要化：去掉无用字段
+    assert len(first.data["results"][0]["snippet"]) <= 160
+    titles = [item["title"] for item in first.data["results"]]
+    assert titles == [item["title"] for item in second.data["results"]]  # 排序稳定
+    assert titles[0] == "Context Compression"
 
 
 def test_todo_complete_delete_and_missing_id(tmp_path: Path) -> None:

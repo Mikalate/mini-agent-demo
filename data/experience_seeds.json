@@ -1,0 +1,27 @@
+[
+  {
+    "kind": "lesson",
+    "trigger": "seq:weather→todo",
+    "content": "天气与待办类任务：先查天气，若建议带伞再调用 todo 添加待办，最后按工具真实结果回答，不要编造。"
+  },
+  {
+    "kind": "lesson",
+    "trigger": "seq:calculator",
+    "content": "算术类任务直接用 calculator，表达式保持简单（如 18*24+7），不要口头心算或编造结果。"
+  },
+  {
+    "kind": "error",
+    "trigger": "err:WEATHER_NO_DATA",
+    "content": "weather 仅支持上海、北京、深圳；未知城市先看错误返回的可用城市列表，不要重复猜测城市名。"
+  },
+  {
+    "kind": "error",
+    "trigger": "err:DOC_NOT_FOUND",
+    "content": "read_docs 仅支持 readme/prompts/problem-solving/demo-notes；未知 doc_id 先看错误返回的可用列表再重试。"
+  },
+  {
+    "kind": "error",
+    "trigger": "err:NO_PROGRESS",
+    "content": "NO_PROGRESS 表示相同工具、参数与结果重复；应更换参数、改用其他工具或直接回答，而不是重复调用。"
+  }
+]

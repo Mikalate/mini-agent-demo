@@ -19,12 +19,22 @@ async def _weather(arguments: dict[str, Any], context: ToolContext) -> ToolResul
     fixture = _load_fixture()
     city_data = fixture.get(city.casefold())
     if city_data is None:
-        raise ToolFailure("WEATHER_NO_DATA", f"本地演示数据中没有 {city} 的天气。", retryable=True)
+        raise ToolFailure(
+            "WEATHER_NO_DATA",
+            f"本地演示数据中没有 {city} 的天气；可用城市：{', '.join(fixture)}。",
+            retryable=True,
+        )
     key = requested_date or "default"
     weather = city_data.get(key)
     if weather is None:
+        available_dates = sorted(
+            {date for date in city_data if date != "default"}
+        )
         raise ToolFailure(
-            "WEATHER_NO_DATA", f"本地演示数据中没有 {city} 在 {requested_date} 的天气。", retryable=True
+            "WEATHER_NO_DATA",
+            f"本地演示数据中没有 {city} 在 {requested_date} 的天气；"
+            f"可用日期：{', '.join(available_dates) or '无'}（不传 date 时使用默认值）。",
+            retryable=True,
         )
     return ToolResult(
         ok=True,

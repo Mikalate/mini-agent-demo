@@ -50,6 +50,18 @@ class TodoRecord:
 
 
 @dataclass(slots=True)
+class ExperienceRecord:
+    id: str
+    kind: Literal["error", "lesson"]
+    trigger: str
+    content: str
+    source_run_id: str | None = None
+    hit_count: int = 0
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True)
 class RunState:
     run_id: str
     user_id: str

@@ -1,0 +1,7 @@
+Mini Agent 演示笔记
+====================
+
+- 提供 calculator、search、todo、weather、read_docs 五个本地工具。
+- 使用 DeepSeek 思考模式与流式请求，支持实时 token 预算断流。
+- 上下文按打包的 DeepSeek tokenizer 估算 token 数，超过预算时滚动压缩。
+- 每个 run 都会写入 JSONL Trace，终端与 Trace 均不泄露隐藏推理。

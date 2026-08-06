@@ -1,0 +1,26 @@
+[
+  {
+    "id": "readme",
+    "title": "README",
+    "path": "README.md",
+    "description": "项目总览、运行方式、配置与已知限制"
+  },
+  {
+    "id": "prompts",
+    "title": "运行时 Prompt",
+    "path": "PROMPTS.md",
+    "description": "实际发送给模型的 system 与滚动摘要 prompt"
+  },
+  {
+    "id": "problem-solving",
+    "title": "关键工程问题",
+    "path": "PROBLEM_SOLVING.md",
+    "description": "实现过程中的关键工程问题与取舍"
+  },
+  {
+    "id": "demo-notes",
+    "title": "演示笔记",
+    "path": "data/demo_notes.txt",
+    "description": "一段 txt 演示文档，用于展示 txt 格式支持"
+  }
+]
